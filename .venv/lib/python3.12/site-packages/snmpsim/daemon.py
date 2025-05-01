@@ -1,0 +1,195 @@
+#
+# This file is part of snmpsim software.
+#
+# Copyright (c) 2010-2019, Ilya Etingof <etingof@gmail.com>
+# License: https://www.pysnmp.com/snmpsim/license.html
+#
+import sys
+
+from snmpsim import error
+
+if sys.platform[:3] == "win":
+
+    def daemonize(pidfile):
+        raise error.SnmpsimError("Windows is not inhabited with daemons!")
+
+    class PrivilegesOf:
+        """Context manager performing nothing on Windows"""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            pass
+
+        def __exit__(self, *args):
+            pass
+
+else:
+    import os
+    import pwd
+    import grp
+    import atexit
+    import signal
+    import tempfile
+
+    def daemonize(pidfile):
+        try:
+            pid = os.fork()
+            if pid > 0:
+                # exit first parent
+                os._exit(0)
+
+        except OSError as exc:
+            raise error.SnmpsimError("ERROR: fork #1 failed: %s" % exc)
+
+        # decouple from parent environment
+        try:
+            os.chdir("/")
+            os.setsid()
+
+        except OSError:
+            pass
+
+        os.umask(0)
+
+        # do second fork
+        try:
+            pid = os.fork()
+            if pid > 0:
+                # exit from second parent
+                os._exit(0)
+
+        except OSError as exc:
+            raise error.SnmpsimError("ERROR: fork #2 failed: %s" % exc)
+
+        def signal_cb(s, f):
+            raise KeyboardInterrupt
+
+        for s in signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT:
+            signal.signal(s, signal_cb)
+
+        # write pidfile
+        def atexit_cb():
+            try:
+                if pidfile:
+                    os.remove(pidfile)
+
+            except OSError:
+                pass
+
+        atexit.register(atexit_cb)
+
+        try:
+            if pidfile:
+                fd, nm = tempfile.mkstemp(dir=os.path.dirname(pidfile))
+                os.write(fd, ("%d\n" % os.getpid()).encode("utf-8"))
+                os.close(fd)
+                os.rename(nm, pidfile)
+
+        except Exception as exc:
+            raise error.SnmpsimError(f"Failed to create PID file {pidfile}: {exc}")
+
+        # redirect standard file descriptors
+        sys.stdout.flush()
+        sys.stderr.flush()
+        si = open(os.devnull)
+        so = open(os.devnull, "a+")
+        se = open(os.devnull, "a+")
+
+        os.dup2(si.fileno(), sys.stdin.fileno())
+        os.dup2(so.fileno(), sys.stdout.fileno())
+        os.dup2(se.fileno(), sys.stderr.fileno())
+
+    class PrivilegesOf:
+        """Context manager executing under reduced privileges"""
+
+        def __init__(self, uname, gname, final=False):
+            self._uname = uname
+            self._gname = gname
+            self._final = final
+            self._olduid = self._oldgid = None
+
+        def __enter__(self):
+            if os.getenv("SNMPSIM_ALLOW_ROOT") == "true":
+                return
+
+            if os.getuid() != 0:
+                if self._uname or self._gname:
+                    try:
+                        pw_name = pwd.getpwnam(self._uname).pw_name
+                        gr_name = grp.getgrnam(self._gname).gr_name
+
+                    except Exception as exc:
+                        raise error.SnmpsimError(
+                            "getpwnam()/getgrnam() failed for %s/%s: "
+                            "%s" % (self._uname, self._gname, exc)
+                        )
+
+                    if self._uname != pw_name or self._gname != gr_name:
+                        raise error.SnmpsimError(
+                            "Process is running under different UID/GID"
+                        )
+                else:
+                    return
+
+            else:
+                if not self._uname or not self._gname:
+                    raise error.SnmpsimError(
+                        "Must drop privileges to a non-privileged user&group"
+                    )
+
+            try:
+                runningUid = pwd.getpwnam(self._uname).pw_uid
+                runningGid = grp.getgrnam(self._gname).gr_gid
+
+            except Exception as exc:
+                raise error.SnmpsimError(
+                    "getpwnam()/getgrnam() failed for %s/%s: "
+                    "%s" % (self._uname, self._gname, exc)
+                )
+
+            try:
+                os.setgroups([])
+
+            except Exception as exc:
+                raise error.SnmpsimError("setgroups() failed: %s" % exc)
+
+            try:
+                if self._final:
+                    os.setgid(runningGid)
+                    os.setuid(runningUid)
+
+                else:
+                    self._olduid = os.getuid()
+                    self._oldgid = os.getgid()
+
+                    os.setegid(runningGid)
+                    os.seteuid(runningUid)
+
+            except Exception as exc:
+                raise error.SnmpsimError(
+                    "%s failed for %s/%s: %s"
+                    % (
+                        self._final and "setgid()/setuid()" or "setegid()/seteuid()",
+                        runningGid,
+                        runningUid,
+                        exc,
+                    )
+                )
+
+            os.umask(63)  # 0077
+
+        def __exit__(self, *args):
+            if self._olduid is None or self._oldgid is None:
+                return
+
+            try:
+                os.setegid(self._oldgid)
+                os.seteuid(self._olduid)
+
+            except Exception as exc:
+                raise error.SnmpsimError(
+                    "setegid()/seteuid() failed for %s/%s: %s"
+                    % (self._oldgid, self._olduid, exc)
+                )

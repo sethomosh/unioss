@@ -1,0 +1,8 @@
+[console_scripts]
+snmpsim-command-responder=snmpsim.commands.responder:main
+snmpsim-command-responder-lite=snmpsim.commands.responder_lite:main
+snmpsim-manage-records=snmpsim.commands.rec2rec:main
+snmpsim-record-commands=snmpsim.commands.cmd2rec:main
+snmpsim-record-mibs=snmpsim.commands.mib2rec:main
+snmpsim-record-traffic=snmpsim.commands.pcap2rec:main
+
