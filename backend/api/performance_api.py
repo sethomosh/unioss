@@ -1,7 +1,7 @@
-from flask import Blueprint
+from flask import Blueprint, jsonify
 
-bp = Blueprint('performance_api', __name__)
+performance_api = Blueprint('performance_api', __name__)
 
-@bp.route('/')
-def index():
-    return "performance_api endpoint"
+@performance_api.route('/performance/status', methods=['GET'])
+def performance_status():
+    return jsonify({'status': 'Performance module OK'})
