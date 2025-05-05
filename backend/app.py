@@ -7,6 +7,7 @@ from backend.api.traffic_api import traffic_api
 from backend.config.settings import configure_logging
 def create_app():
     app = Flask(__name__)
+    CORS(app)
     app.config.from_object('backend.config.settings')
     
     #Enable CORS globally
