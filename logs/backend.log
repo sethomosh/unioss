@@ -25,3 +25,42 @@
 [2025-05-08 11:56:36,513] INFO in settings: Logging configured
 [2025-05-08 11:56:36,548] INFO in settings: Logging configured
 [2025-05-08 11:56:42,827] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 15:56:03,984] INFO in settings: Logging configured
+[2025-05-08 15:56:04,152] INFO in settings: Logging configured
+[2025-05-08 15:56:04,175] INFO in settings: Logging configured
+[2025-05-08 15:56:04,271] INFO in settings: Logging configured
+[2025-05-08 16:13:37,142] INFO in settings: Logging configured
+[2025-05-08 16:13:37,209] INFO in settings: Logging configured
+[2025-05-08 16:13:37,275] INFO in settings: Logging configured
+[2025-05-08 16:13:37,277] INFO in settings: Logging configured
+[2025-05-08 16:13:44,720] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 16:14:18,243] INFO in discovery_api: Discovered 2 devices
+[2025-05-08 16:15:06,821] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 16:15:29,808] ERROR in access_api: Access sessions error: 'user'
+[2025-05-08 16:40:47,614] INFO in settings: Logging configured
+[2025-05-08 16:40:47,614] INFO in settings: Logging configured
+[2025-05-08 16:40:47,674] INFO in settings: Logging configured
+[2025-05-08 16:40:47,704] INFO in settings: Logging configured
+[2025-05-08 16:41:01,524] ERROR in access_api: Access sessions error: 'user'
+[2025-05-08 16:41:13,833] INFO in discovery_api: Discovered 2 devices
+[2025-05-08 16:41:20,063] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 16:41:26,304] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 16:41:39,502] ERROR in access_api: Access sessions error: 'user'
+[2025-05-08 16:42:00,716] INFO in discovery_api: Discovered 2 devices
+[2025-05-08 16:42:19,139] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 16:42:35,143] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 16:59:31,888] INFO in settings: Logging configured
+[2025-05-08 16:59:31,916] INFO in settings: Logging configured
+[2025-05-08 16:59:31,919] INFO in settings: Logging configured
+[2025-05-08 16:59:31,971] INFO in settings: Logging configured
+[2025-05-08 16:59:36,050] ERROR in access_api: Access sessions error: 'login_time'
+[2025-05-08 16:59:58,972] INFO in discovery_api: Discovered 2 devices
+[2025-05-08 17:00:08,677] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 17:00:24,245] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 17:36:49,328] INFO in settings: Logging configured
+[2025-05-08 17:36:49,331] INFO in settings: Logging configured
+[2025-05-08 17:36:49,377] INFO in settings: Logging configured
+[2025-05-08 17:36:49,396] INFO in settings: Logging configured
+[2025-05-08 17:37:11,184] INFO in discovery_api: Discovered 2 devices
+[2025-05-08 17:38:09,221] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-08 17:38:24,869] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'

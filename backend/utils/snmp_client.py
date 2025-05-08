@@ -23,7 +23,16 @@ def snmp_get(host: str, community: str, oid: str) -> str:
     if error_indication or error_status:
         # Agent or engine error—raise with details
         raise Exception(f'{error_status.prettyPrint()} at {error_index}')
-    # Extract the value part of the first varBind tuple
-    value = var_binds[0][1]
-    result = value.prettyPrint() if hasattr(value, 'prettyPrint') else str(value)
+
+    # ⬅️ EDIT: unpack the first varBind into (oid, value)
+    _, value = var_binds[0]
+
+    # ⬅️ EDIT: if the returned `value` has a `.prettyPrint()` method (PySNMP type),
+    # use it; otherwise fall back to Python’s str()
+    if hasattr(value, 'prettyPrint'):
+        result = value.prettyPrint()
+    else:
+        result = str(value)
+
+    # ⬅️ EDIT: strip any extra whitespace and return
     return result.strip()
