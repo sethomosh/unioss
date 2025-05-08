@@ -1,8 +1,24 @@
-flask
-flask-cors
-gunicorn
-mysql-connector-python
-pysnmp>=6.2.6
-pyasn1==0.6.0
+# Web framework
+Flask==2.3.2
+
+# Cross-Origin Resource Sharing
+flask-cors==5.0.1
+
+# WSGI server
+gunicorn==20.1.0
+
+# MySQL driver
+mysql-connector-python==8.1.0
+
+# SNMP libraries
+pysnmp==4.4.12
+pyasn1>=0.5.0,<0.6.0      # pyasn1-modules 0.3.x requires pyasn1 <0.6.0:contentReference[oaicite:0]{index=0}
+pyasn1-modules==0.3.0    # must match your SNMP data modules:contentReference[oaicite:1]{index=1}
+
+# Scheduler (if you’re using APScheduler)
 APScheduler==3.10.1
-# other dependencies...
+
+
+
+
+# (add any other deps below…)

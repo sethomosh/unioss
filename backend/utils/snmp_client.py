@@ -5,7 +5,7 @@ from pysnmp.hlapi import (
     ContextData,           # Context data for SNMP v2c :contentReference[oaicite:3]{index=3}
     ObjectType,            # Wraps OID/value pairs :contentReference[oaicite:4]{index=4}
     ObjectIdentity,        # Represents an OID :contentReference[oaicite:5]{index=5}
-    getCmd                 # High-level GET command generator :contentReference[oaicite:6]{index=6}
+    getCmd                # High-level GET command generator :contentReference[oaicite:6]{index=6}
 )
 
 def snmp_get(host: str, community: str, oid: str) -> str:
@@ -15,7 +15,7 @@ def snmp_get(host: str, community: str, oid: str) -> str:
     iterator = getCmd(
         SnmpEngine(),
         CommunityData(community, mpModel=1),
-        UdpTransportTarget((host, 161)),
+        UdpTransportTarget((host, 1161)),
         ContextData(),
         ObjectType(ObjectIdentity(oid))
     )
@@ -23,5 +23,7 @@ def snmp_get(host: str, community: str, oid: str) -> str:
     if error_indication or error_status:
         # Agent or engine error—raise with details
         raise Exception(f'{error_status.prettyPrint()} at {error_index}')
-    # var_binds[0] is a tuple (ObjectIdentity, value); extract and return the value
-    return var_binds[0].prettyPrint().split('=', 1)[1].strip()
+    # Extract the value part of the first varBind tuple
+    value = var_binds[0][1]
+    result = value.prettyPrint() if hasattr(value, 'prettyPrint') else str(value)
+    return result.strip()
