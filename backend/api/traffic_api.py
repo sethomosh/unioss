@@ -15,7 +15,7 @@ def list_traffic():
         response = [
             {
                 "device_ip": t["ip"],
-                "interface": t.get("interface"),
+                "interface_index": t.get("interface_index"),
                 "inbound_kbps": t.get("inbound"),
                 "outbound_kbps": t.get("outbound"),
                 "errors": t.get("errors", 0),

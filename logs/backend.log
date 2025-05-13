@@ -64,3 +64,70 @@
 [2025-05-08 17:37:11,184] INFO in discovery_api: Discovered 2 devices
 [2025-05-08 17:38:09,221] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
 [2025-05-08 17:38:24,869] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-13 05:53:56,931] INFO in settings: Logging configured
+[2025-05-13 05:53:56,954] INFO in settings: Logging configured
+[2025-05-13 05:53:56,958] INFO in settings: Logging configured
+[2025-05-13 05:53:57,047] INFO in settings: Logging configured
+[2025-05-13 05:53:59,831] INFO in access_api: Fetched 2 access sessions
+[2025-05-13 05:57:34,781] INFO in discovery_api: Discovered 2 devices
+[2025-05-13 05:57:55,608] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-13 05:58:14,721] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-13 06:04:54,164] INFO in settings: Logging configured
+[2025-05-13 06:04:54,331] INFO in settings: Logging configured
+[2025-05-13 06:04:54,331] INFO in settings: Logging configured
+[2025-05-13 06:04:54,431] INFO in settings: Logging configured
+[2025-05-13 06:05:07,481] INFO in discovery_api: Discovered 2 devices
+[2025-05-13 06:05:26,847] ERROR in performance_api: Performance error: 'int' object has no attribute 'prettyPrint'
+[2025-05-13 06:05:41,937] ERROR in traffic_api: Traffic error: 'int' object has no attribute 'prettyPrint'
+[2025-05-13 06:16:09,880] INFO in settings: Logging configured
+[2025-05-13 06:16:09,905] INFO in settings: Logging configured
+[2025-05-13 06:16:10,033] INFO in settings: Logging configured
+[2025-05-13 06:16:10,045] INFO in settings: Logging configured
+[2025-05-13 06:16:25,721] INFO in discovery_api: Discovered 2 devices
+[2025-05-13 06:16:45,246] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 06:17:05,239] ERROR in traffic_api: Traffic error: No SNMP response received before timeout at 0
+[2025-05-13 06:30:15,194] INFO in settings: Logging configured
+[2025-05-13 06:30:15,323] INFO in settings: Logging configured
+[2025-05-13 06:30:15,328] INFO in settings: Logging configured
+[2025-05-13 06:30:15,443] INFO in settings: Logging configured
+[2025-05-13 06:30:34,911] INFO in discovery_api: Discovered 2 devices
+[2025-05-13 06:31:05,850] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 06:31:24,323] ERROR in traffic_api: Traffic error: No SNMP response received before timeout at 0
+[2025-05-13 07:09:32,492] INFO in settings: Logging configured
+[2025-05-13 07:09:32,559] INFO in settings: Logging configured
+[2025-05-13 07:09:32,675] INFO in settings: Logging configured
+[2025-05-13 07:09:32,690] INFO in settings: Logging configured
+[2025-05-13 11:53:49,334] INFO in settings: Logging configured
+[2025-05-13 11:53:49,335] INFO in settings: Logging configured
+[2025-05-13 11:53:49,339] INFO in settings: Logging configured
+[2025-05-13 11:53:49,378] INFO in settings: Logging configured
+[2025-05-13 11:54:23,118] INFO in discovery_api: Discovered 2 devices
+[2025-05-13 11:55:38,561] INFO in settings: Logging configured
+[2025-05-13 11:55:38,582] INFO in settings: Logging configured
+[2025-05-13 11:55:38,608] INFO in settings: Logging configured
+[2025-05-13 11:55:38,680] INFO in settings: Logging configured
+[2025-05-13 12:22:48,543] INFO in settings: Logging configured
+[2025-05-13 12:22:48,564] INFO in settings: Logging configured
+[2025-05-13 12:22:48,609] INFO in settings: Logging configured
+[2025-05-13 12:22:48,635] INFO in settings: Logging configured
+[2025-05-13 12:24:12,364] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 12:24:30,976] ERROR in traffic_api: Traffic error: No SNMP response received before timeout at 0
+[2025-05-13 12:46:23,954] INFO in settings: Logging configured
+[2025-05-13 12:46:24,066] INFO in settings: Logging configured
+[2025-05-13 12:46:24,072] INFO in settings: Logging configured
+[2025-05-13 12:46:24,192] INFO in settings: Logging configured
+[2025-05-13 12:52:39,166] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 12:53:02,963] ERROR in traffic_api: Traffic error: No SNMP response received before timeout at 0
+[2025-05-13 12:54:19,930] INFO in settings: Logging configured
+[2025-05-13 12:54:19,965] INFO in settings: Logging configured
+[2025-05-13 12:54:20,070] INFO in settings: Logging configured
+[2025-05-13 12:54:20,107] INFO in settings: Logging configured
+[2025-05-13 12:56:31,329] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 12:56:44,843] ERROR in traffic_api: Traffic error: 1054 (42S22): Unknown column 'ip' in 'field list'
+[2025-05-13 13:20:18,560] INFO in settings: Logging configured
+[2025-05-13 13:20:18,691] INFO in settings: Logging configured
+[2025-05-13 13:20:18,725] INFO in settings: Logging configured
+[2025-05-13 13:20:18,777] INFO in settings: Logging configured
+[2025-05-13 13:21:13,487] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 13:21:50,167] ERROR in performance_api: Performance error: No SNMP response received before timeout at 0
+[2025-05-13 13:22:12,028] ERROR in traffic_api: Traffic error: No SNMP response received before timeout at 0

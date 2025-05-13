@@ -11,7 +11,12 @@ def get_traffic_stats():
     """
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT ip, interface_index FROM device_interfaces")  # or your schema
+    cursor.execute("""
+       SELECT d.ip, di.interface_index
+         FROM device_interfaces AS di
+         JOIN devices AS d
+           ON di.device_id = d.id
+    """)
     rows = cursor.fetchall()
     results = []
 

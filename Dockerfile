@@ -2,6 +2,11 @@
 FROM python:3.11.5-slim AS base
 WORKDIR /app
 
+# Install SNMP utilities for debugging
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends snmp \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user and log directory together
 RUN adduser --system --group appuser \
     && mkdir /app/logs \
@@ -13,6 +18,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Stage 2: Final image
 FROM python:3.11.5-slim 
 WORKDIR /app
+
+# Install SNMP CLI tools in final container too
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends snmp \
+    && rm -rf /var/lib/apt/lists/*
 
 # Recreate same user & logs dir (for safety if not using bind-mount)
 RUN adduser --system --group appuser \
