@@ -27,13 +27,16 @@ services:
       - "5000:5000"
     env_file:
       - .env
+    extra_hosts:
+      - "192.168.1.10:172.18.0.2"
+      - "192.168.1.11:172.18.0.2"
     environment:
       - MYSQL_DB=${MYSQL_DB}
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./logs:/app/logs
+       - logs-data:/app/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/ || exit 1"]
       interval: 30s
@@ -63,5 +66,7 @@ services:
       retries: 20
       start_period: 120s
 
+# Top-level volumes section:
 volumes:
-  db_data:
+  db_data:      # persists MySQL data
+  logs-data:    # ← your new named volume for /app/logs

@@ -1,5 +1,6 @@
 # backend/utils/snmp_client.py
 import logging 
+import os
 from os import getenv
 from pysnmp.hlapi import (
     SnmpEngine,
@@ -14,15 +15,17 @@ from pysnmp.hlapi import (
 logger = logging.getLogger(__name__)
 
 def snmp_get(host: str, community: str, oid: str) -> str:
-    # ignore the `host` parameter—always talk to the sim container
-    target = (getenv("SNMP_HOST", "snmpsim"),
-              int(getenv("SNMP_PORT", 1161)))
+    # always talk to the SNMP simulator container
+    target_host = os.getenv("SNMP_HOST", "snmpsim")
+    target_port = int(os.getenv("SNMP_PORT", 1161))          
     
+    logger.debug(f"SNMP GET to {target_host}:{target_port}, OID {oid}")
+
     
     iterator = getCmd(
         SnmpEngine(),
         CommunityData(community, mpModel=1),
-        UdpTransportTarget((host, 1161), timeout=5, retries=2),
+        UdpTransportTarget((target_host, target_port), timeout=5, retries=2),
         ContextData(),
         ObjectType(ObjectIdentity(oid))
     )
@@ -31,12 +34,11 @@ def snmp_get(host: str, community: str, oid: str) -> str:
     try:
         error_indication, error_status, error_index, var_binds = next(iterator)
     except Exception as ex:
-        logger.error(f"SNMP GET generator exception for {host}, {oid}: {ex}")
+        logger.error(f"SNMP GET generator exception for {target_host}:{target_port}, OID {oid}: {ex}")
         raise
 
 
     if error_indication or error_status:
-        # Safely build an error message without assuming .prettyPrint()
         ei = str(error_indication) if error_indication else None
         es = (error_status.prettyPrint()
               if hasattr(error_status, 'prettyPrint')
@@ -44,17 +46,15 @@ def snmp_get(host: str, community: str, oid: str) -> str:
         # Prefer the engine’s indication, otherwise status
         msg = ei or es
         raise Exception(f'{msg} at {error_index}')
- 
-    # ——— EDIT 1: unpack the first varBind into (oid, value) ———
+
     _, value = var_binds[0]
-
-    # ——— EDIT 2: support both PySNMP types and plain Python types ———
-    if hasattr(value, 'prettyPrint'):
-        # PySNMP will give you an object with prettyPrint()
-        result = value.prettyPrint()
-    else:
-        # Sometimes you get back a raw int or str
-        result = str(value)
-
-    # ——— EDIT 3: strip whitespace and return clean text ———
+    result = value.prettyPrint() if hasattr(value, 'prettyPrint') else str(value)
     return result.strip()
+
+
+def snmp_sysdescr(host: str, community: str = "public") -> str:
+    return snmp_get(host, community, "1.3.6.1.2.1.1.1.0")
+
+
+def snmp_sysobjectid(host: str, community: str = "public") -> str:
+    return snmp_get(host, community, "1.3.6.1.2.1.1.2.0")
