@@ -5,11 +5,15 @@ from backend.api.discovery_api import discovery_api
 from backend.api.performance_api import performance_api
 from backend.api.traffic_api import traffic_api
 from backend.config.settings import configure_logging
+from backend.snmp_routes import snmp_bp
+from backend.api.health_api import health_api
+
 def create_app():
     app = Flask(__name__)
     CORS(app)
     app.config.from_object('backend.config.settings')
-    
+    app.register_blueprint(health_api)
+
     #Enable CORS globally
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     configure_logging(app)
@@ -19,6 +23,7 @@ def create_app():
     app.register_blueprint(discovery_api, url_prefix='/api/discovery')
     app.register_blueprint(performance_api, url_prefix='/api/performance')
     app.register_blueprint(traffic_api, url_prefix='/api/traffic')
+    app.register_blueprint(snmp_bp)
     return app
 
 if __name__ == '__main__':
