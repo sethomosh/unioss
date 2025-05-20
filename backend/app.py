@@ -12,17 +12,18 @@ def create_app():
     app = Flask(__name__)
     CORS(app)
     app.config.from_object('backend.config.settings')
-    app.register_blueprint(health_api)
 
     #Enable CORS globally
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     configure_logging(app)
 
     # Register Blueprints
+    from backend.api.health_api import health_api
     app.register_blueprint(access_api, url_prefix='/api/access')
     app.register_blueprint(discovery_api, url_prefix='/api/discovery')
     app.register_blueprint(performance_api, url_prefix='/api/performance')
     app.register_blueprint(traffic_api, url_prefix='/api/traffic')
+    app.register_blueprint(health_api,   url_prefix='/health')
     app.register_blueprint(snmp_bp)
     return app
 
