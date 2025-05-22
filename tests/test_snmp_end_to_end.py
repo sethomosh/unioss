@@ -26,14 +26,14 @@ def test_sysdescr():
     r = requests.get(f"{BASE_URL}/snmp/sysdescr", params=params)
     assert r.status_code == 200
     body = r.json()
-    assert "sysDescr" in body
-    assert "Simulated SNMP Device" in body["sysDescr"]
+    assert "sysdescr" in body
+    assert "Simulated SNMP Device" in body["sysdescr"]
 
 def test_sysobjectid():
     params = {"host": "ignored-host"}
     r = requests.get(f"{BASE_URL}/snmp/sysobjectid", params=params)
     assert r.status_code == 200
     body = r.json()
-    assert "sysObjectID" in body
+    assert "sysObjectid" in body
     # the simulator returns a “No Such Instance” message
-    assert "No Such Instance" in body["sysObjectID"]
+    assert "No Such Instance" in body["sysObjectid"]
