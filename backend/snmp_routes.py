@@ -12,7 +12,7 @@ def sysdescr():
         return jsonify({'error': 'Missing host parameter'}), 400
     try:
         result = snmp_sysdescr(host)
-        return jsonify({'sysDescr': result})
+        return jsonify({'sysdescr': result})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -23,6 +23,6 @@ def sysobjectid():
         return jsonify({'error': 'Missing host parameter'}), 400
     try:
         result = snmp_sysobjectid(host)
-        return jsonify({'sysObjectID': result})
+        return jsonify({'sysobjectid': result})
     except Exception as e:
         return jsonify({'error': str(e)}), 500

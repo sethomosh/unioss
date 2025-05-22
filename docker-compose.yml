@@ -25,17 +25,12 @@ services:
     build: .
     ports:
       - "5000:5000"
-    entrypoint:
-      - /usr/local/bin/wait-for-it.sh
-      - "--timeout=60"
-      - "db:3306"
-      - "--"
-      - gunicorn
-      - "-w"
-      - "4"
-      - "-b"
-      - "0.0.0.0:5000"
-      - backend.app:app
+    entrypoint: >
+     sh -c "
+       chown -R appuser:appuser /app/logs &&
+       /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
+       exec gunicorn -w 4 -b 0.0.0.0:5000 backend.app:app
+     "
     env_file:
       - .env
     extra_hosts:
@@ -49,7 +44,7 @@ services:
       snmpsim:
         condition: service_healthy
     volumes:
-       - logs-data:/app/logs
+      - logs-data:/app/logs:rw,uid=101,gid=101
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
       interval: 30s
