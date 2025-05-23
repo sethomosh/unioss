@@ -18,7 +18,7 @@ pyasn1-modules==0.3.0    # must match your SNMP data modules:contentReference[oa
 # Scheduler (if you’re using APScheduler)
 APScheduler==3.10.1
 
-pytest
+pytest>=7.0
 requests
 
 

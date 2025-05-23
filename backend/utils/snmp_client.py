@@ -14,10 +14,10 @@ from pysnmp.hlapi import (
 
 logger = logging.getLogger(__name__)
 
-def snmp_get(host: str, community: str, oid: str) -> str:
-    # always talk to the SNMP simulator container
-    target_host = os.getenv("SNMP_HOST", "snmpsim")
-    target_port = int(os.getenv("SNMP_PORT", 1161))          
+def snmp_get(host: str, community: str, oid: str, port: int | None = None) -> str:
+    # allow override of container vs. real device parameters
+    target_host = os.getenv("SNMP_HOST", host)
+    target_port = port or int(os.getenv("SNMP_PORT", 1161))          
     
     logger.debug(f"SNMP GET to {target_host}:{target_port}, OID {oid}")
 
@@ -52,9 +52,9 @@ def snmp_get(host: str, community: str, oid: str) -> str:
     return result.strip()
 
 
-def snmp_sysdescr(host: str, community: str = "public") -> str:
-    return snmp_get(host, community, "1.3.6.1.2.1.1.1.0")
+def snmp_sysdescr(host: str, community: str = "public", port: int | None = None) -> str:
+    return snmp_get(host, community, "1.3.6.1.2.1.1.1.0", port=port)
 
 
-def snmp_sysobjectid(host: str, community: str = "public") -> str:
-    return snmp_get(host, community, "1.3.6.1.2.1.1.2.0")
+def snmp_sysobjectid(host: str, community: str = "public", port: int | None = None) -> str:
+    return snmp_get(host, community, "1.3.6.1.2.1.1.2.0", port=port)
