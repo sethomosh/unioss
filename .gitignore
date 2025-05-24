@@ -9,20 +9,21 @@
 /.venv/
 /venv/
 
-# Python bytecode
+# Python bytecode & pytest cache
 __pycache__/
-/*.py[cod]
+*.py[cod]
+.pytest_cache/
 
 # Docker and env files
 *.pid
-.env
+*.env            # don’t check in secrets
 
 # IDE configs
 .vscode/
 .idea/
 .DS_Store
 
-# Node
+# Node artifacts (if any)
 node_modules/
 dist/
 npm-debug.log*

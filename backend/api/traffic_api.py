@@ -14,12 +14,12 @@ def list_traffic():
         raw = get_traffic_stats()
         response = [
             {
-                "device_ip": t["ip"],
-                "interface_index": t.get("interface_index"),
-                "inbound_kbps": t.get("inbound"),
-                "outbound_kbps": t.get("outbound"),
-                "errors": t.get("errors", 0),
-                "timestamp": t.get("timestamp")
+                "device_ip":       t["device_ip"],
+                "interface_index": t["interface_index"],
+                "inbound_kbps":    t["inbound_kbps"],
+                "outbound_kbps":   t["outbound_kbps"],
+                "errors":          t.get("errors", 0),
+                "timestamp":       t["timestamp"]
             }
             for t in raw
         ]

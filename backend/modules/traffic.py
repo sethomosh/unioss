@@ -31,7 +31,7 @@ def get_traffic_stats():
         out_octets = snmp_get(ip, "public", f"1.3.6.1.2.1.2.2.1.16.{idx}")
         results.append({
             "device_ip": ip,
-            "interface": name,
+            "interface_index": idx,
             "inbound_kbps": in_octets,
             "outbound_kbps": out_octets,
             "errors": 0,
