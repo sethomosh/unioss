@@ -9,7 +9,7 @@ export interface JsonResponse {
 
 /** Health check */
 export async function getHealth(): Promise<JsonResponse> {
-  const res = await fetch(`${BASE}/health`);
+  const res = await fetch(`${BASE}/api/health/`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json();
 }

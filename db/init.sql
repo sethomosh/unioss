@@ -34,3 +34,28 @@ VALUES
   (1, 2, 'eth1'),
   (2, 1, 'eth0'),
   (2, 2, 'eth1');
+
+-- Table: performance_metrics
+CREATE TABLE IF NOT EXISTS performance_metrics (
+  id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+  device_ip     VARCHAR(45)     NOT NULL,
+  timestamp     DATETIME        NOT NULL,
+  cpu_pct       DECIMAL(5,2)    NOT NULL,
+  memory_pct    DECIMAL(5,2)    NOT NULL,
+  uptime_secs   BIGINT          NOT NULL,
+  INDEX (device_ip),
+  INDEX (timestamp)
+);
+
+-- Table: traffic_metrics
+CREATE TABLE IF NOT EXISTS traffic_metrics (
+  id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
+  device_ip          VARCHAR(45)    NOT NULL,
+  interface_index    INT            NOT NULL,
+  timestamp          DATETIME       NOT NULL,
+  inbound_kbps       DECIMAL(10,2)  NOT NULL,
+  outbound_kbps      DECIMAL(10,2)  NOT NULL,
+  errors             INT            DEFAULT 0,
+  INDEX (device_ip),
+  INDEX (interface_index, timestamp)
+);

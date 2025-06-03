@@ -1,37 +1,41 @@
 # backend/snmp_routes.py
 
 from flask import Blueprint, request, jsonify
-from backend.utils.snmp_client import snmp_sysdescr, snmp_sysobjectid
+from backend.utils.snmp_client import snmp_get
 
 snmp_bp = Blueprint('snmp', __name__, url_prefix='/snmp')
+
+# OIDs for sysDescr and sysObjectID
+SYS_DESCR_OID     = "1.3.6.1.2.1.1.1.0"
+SYS_OBJECT_ID_OID = "1.3.6.1.2.1.1.2.0"
 
 @snmp_bp.route('/sysdescr')
 def sysdescr():
     host      = request.args.get('host')
     community = request.args.get('community', 'public')
-    port      = request.args.get('port', type=int)
+    port      = request.args.get('port', type=int) or 161
 
     if not host:
         return jsonify({'error': 'Missing host parameter'}), 400
     try:
-        result = snmp_sysdescr(host, community=community, port=port)
+        result = snmp_get(host, community, SYS_DESCR_OID, port)
         return jsonify({'sysdescr': result}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 502
 
 @snmp_bp.route('/sysobjectid')
 def sysobjectid():
-    host = request.args.get('host')
+    host      = request.args.get('host')
     community = request.args.get('community', 'public')
-    port      = request.args.get('port', type=int)
+    port      = request.args.get('port', type=int) or 161
+
     if not host:
         return jsonify({'error': 'Missing host parameter'}), 400
     try:
-        result = snmp_sysobjectid(host, community=community, port=port)
+        result = snmp_get(host, community, SYS_OBJECT_ID_OID, port)
         return jsonify({'sysobjectid': result}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 502
-
 
 @snmp_bp.route('/get')
 def get_oid():
@@ -41,42 +45,13 @@ def get_oid():
     host      = request.args.get('host')
     oid       = request.args.get('oid')
     community = request.args.get('community', 'public')
-    port      = request.args.get('port', type=int)
+    port      = request.args.get('port', type=int) or 161
 
     if not host or not oid:
         return jsonify({'error': 'Missing host or oid parameter'}), 400
 
     try:
-        # snmp_get is the low-level fetcher in snmp_client.py
-        from backend.utils.snmp_client import snmp_get
-        result = snmp_get(host, community, oid, port)
-        return jsonify({'oid': oid, 'value': result}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 502
-
-def snmp_get_generic():
-    host      = request.args.get('host', type=str)
-    oid       = request.args.get('oid', type=str)
-    community = request.args.get('community', 'public')
-    port      = request.args.get('port', type=int)
-
-    # Validate required params
-    if not host:
-        return jsonify({'error': 'Missing host parameter'}), 400
-    if not oid:
-        return jsonify({'error': 'Missing oid parameter'}), 400
-
-    # Validate port if provided
-    if port is not None and not (1 <= port <= 65535):
-        return jsonify({'error': 'Port must be between 1 and 65535'}), 400
-
-    # Quick OID sanity check: only digits and dots
-    if not all(c.isdigit() or c == '.' for c in oid):
-        return jsonify({'error': 'Invalid OID format'}), 400
-
-    try:
-        # delegate to your existing client, which already accepts port
-        value = snmp_get(host, community, oid, port=port)
+        value = snmp_get(host, community, oid, port)
         return jsonify({'oid': oid, 'value': value}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 502

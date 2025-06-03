@@ -23,8 +23,8 @@ def create_app():
     app.register_blueprint(discovery_api, url_prefix='/api/discovery')
     app.register_blueprint(performance_api, url_prefix='/api/performance')
     app.register_blueprint(traffic_api, url_prefix='/api/traffic')
-    app.register_blueprint(health_api,   url_prefix='/health')
-    app.register_blueprint(snmp_bp)
+    app.register_blueprint(health_api,   url_prefix='/api/health')
+    app.register_blueprint(snmp_bp, url_prefix='/api/snmp')
     return app
 
 if __name__ == '__main__':
