@@ -1,3 +1,5 @@
+# backend/api/discovery_api.py
+
 from flask import Blueprint, jsonify, current_app
 from backend.modules.discovery import get_device_inventory
 
@@ -17,10 +19,10 @@ def list_devices():
                 "ip":          d.get("ip"),
                 "hostname":    d.get("hostname", ""),
                 "description": d.get("description", ""),
-                "vendor":      d.get("vendor",""),
-                "os_version":  d.get("os_version",""),
-                "status":      d.get("status","unknown"),
-                "error":       d.get("error")  # None if no error
+                "vendor":      d.get("vendor", ""),     # ← vendor field now populated
+                "os_version":  d.get("os_version", ""), # ← os_version field now populated
+                "status":      d.get("status", "unknown"),  # ← reflect SNMP reachability
+                "error":       d.get("error")          # None if no error
             })
         current_app.logger.info(f"Discovered {len(response)} devices")
         return jsonify(response), 200

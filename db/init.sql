@@ -59,3 +59,23 @@ CREATE TABLE IF NOT EXISTS traffic_metrics (
   INDEX (device_ip),
   INDEX (interface_index, timestamp)
 );
+
+-- Table: access_sessions
+CREATE TABLE IF NOT EXISTS access_sessions (
+  id                INT AUTO_INCREMENT PRIMARY KEY,
+  user              VARCHAR(100) NOT NULL,
+  ip                VARCHAR(45)  NOT NULL,
+  mac               VARCHAR(17)  NOT NULL,
+  login_time        DATETIME     NOT NULL,
+  logout_time       DATETIME     DEFAULT NULL,
+  duration_seconds  INT          DEFAULT NULL,
+  authenticated_via VARCHAR(50)  NOT NULL,
+  created_at        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- (Optional) Insert a couple of sample rows so you see data right away:
+INSERT IGNORE INTO access_sessions 
+  (user, ip, mac, login_time, logout_time, duration_seconds, authenticated_via)
+VALUES
+  ('alice', '192.168.1.10', 'AA:BB:CC:01:02:03', '2025-05-08 16:00:00', NULL,   NULL,     'snmp'),
+  ('bob',   '192.168.1.11', 'AA:BB:CC:01:02:04', '2025-05-08 15:30:00', '2025-05-08 16:00:00', 1800, 'database');

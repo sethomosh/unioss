@@ -1,27 +1,48 @@
+# backend/modules/access_control.py
+
+from backend.utils.db import get_db_connection
+
 def get_active_sessions():
     """
-    Stub for Access Control: returns list of current user sessions.
-    Replace with real logic (e.g. querying a database or SNMP traps).
+    Returns a list of all access sessions in the `access_sessions` table.
+    Each dict has keys: user, ip, mac, login_time, logout_time, duration, authenticated_via
     """
-    return [
-        {
-            "user": "alice",                      # ← add this
-            "ip": "192.168.1.10",
-            "mac": "AA:BB:CC:01:02:03",
-            "status": "allowed",
-            "login_time": "2025-05-08T16:00:00Z",   # ← required
-            "logout_time": None,                   # ← allow None
-            "duration": None,                      # ← allow None
-            "authenticated_via": "snmp"            # ← any string
-        },
-        {
-            "user": "bob",                        # ← and this
-            "ip": "192.168.1.11",
-            "mac": "AA:BB:CC:01:02:04",
-            "status": "blocked",
-            "login_time": "2025-05-08T15:30:00Z",
-            "logout_time": "2025-05-08T16:00:00Z",
-            "duration": 1800,                      # seconds, e.g.
-            "authenticated_via": "database"
-        },
-    ]
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # Pull every row (you could filter WHERE logout_time IS NULL if you only want
+    # “currently active,” but front end expects them all)
+    cursor.execute("""
+        SELECT
+            user,
+            ip,
+            mac,
+            login_time,
+            logout_time,
+            duration_seconds AS duration,
+            authenticated_via
+        FROM access_sessions
+        ORDER BY login_time DESC
+    """)
+    rows = cursor.fetchall()
+
+    result = []
+    for row in rows:
+        login_iso = row["login_time"].isoformat() + "Z"
+        logout_iso = None
+        if row["logout_time"]:
+            logout_iso = row["logout_time"].isoformat() + "Z"
+
+        result.append({
+            "user":              row["user"],
+            "ip":                row["ip"],
+            "mac":               row["mac"],
+            "login_time":        login_iso,
+            "logout_time":       logout_iso,
+            "duration":          row["duration"],          # int or None
+            "authenticated_via": row["authenticated_via"]
+        })
+
+    cursor.close()
+    conn.close()
+    return result

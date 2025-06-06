@@ -1,5 +1,4 @@
-// src/utils/api.ts
-
+// frontend/src/utils/api.ts
 const BASE = import.meta.env.VITE_API_BASE || '';
 
 export interface JsonResponse {
@@ -32,9 +31,9 @@ export async function listDevices(): Promise<Array<{
 /** Performance */
 export async function listPerformance(): Promise<Array<{
   ip: string;
-  cpu?: string;
-  memory?: string;
-  uptime?: string;
+  cpu?: number | null;
+  memory?: number | null;
+  uptime?: string | null;
   last_updated?: string;
 }>> {
   const res = await fetch(`${BASE}/api/performance/devices`);
@@ -46,8 +45,9 @@ export async function listPerformance(): Promise<Array<{
 export async function listTraffic(): Promise<Array<{
   device_ip: string;
   interface_index: number;
-  inbound_kbps: string;
-  outbound_kbps: string;
+  inbound_kbps: number | null;
+  outbound_kbps: number | null;
+  iface_name: string;          // ← we’ve added iface_name here
   errors: number;
   timestamp: string;
 }>> {
@@ -81,7 +81,9 @@ export async function snmpGet(
   const params = new URLSearchParams({ host, oid });
   if (community) params.set('community', community);
   if (port) params.set('port', String(port));
-  const res = await fetch(`${BASE}/snmp/get?${params}`);
+  //   ↓ we must prepend BASE if your proxy is “/api/snmp/...”
+  //    but since vite.config proxies “/snmp” → Flask, this is OK:
+  const res = await fetch(`${BASE}/api/snmp/get?${params}`);   
   if (!res.ok) throw new Error(`SNMP GET failed: ${res.status}`);
   return res.json();
 }
@@ -98,17 +100,18 @@ export interface Device {
 
 export interface Performance {
   ip: string;
-  cpu?: string;
-  memory?: string;
-  uptime?: string;
+  cpu?: number | null;
+  memory?: number | null;
+  uptime?: string | null;
   last_updated?: string;
 }
 
 export interface Traffic {
   device_ip: string;
   interface_index: number;
-  inbound_kbps: string;
-  outbound_kbps: string;
+  iface_name: string;           // ← must match what backend now returns
+  inbound_kbps: number | null;
+  outbound_kbps: number | null;
   errors: number;
   timestamp: string;
 }
@@ -126,4 +129,38 @@ export interface Session {
 export interface SnmpGetResult {
   oid: string;
   value: string;
+}
+
+/** Get performance info for a single device (by filtering listPerformance) */
+export async function getDevicePerformance(
+  ip: string
+): Promise<Performance | null> {
+  const all = await listPerformance();
+  return all.find((p) => p.ip === ip) ?? null;
+}
+
+/** Get traffic rows for exactly this device_ip */
+export async function getDeviceTraffic(ip: string): Promise<Traffic[]> {
+  const all = await listTraffic();
+  return all.filter((t) => t.device_ip === ip);
+}
+
+/** SNMP sysDescr (via /api/snmp/sysdescr) */
+export async function getSysDescr(host: string): Promise<string> {
+  const res = await fetch(
+    `${BASE}/api/snmp/sysdescr?host=${encodeURIComponent(host)}&port=1161`
+  );
+  if (!res.ok) throw new Error(`SNMP sysDescr failed: ${res.status}`);
+  const data = (await res.json()) as { sysdescr: string };
+  return data.sysdescr;
+}
+
+/** SNMP sysObjectID (via /api/snmp/sysobjectid) */
+export async function getSysObjectId(host: string): Promise<string> {
+  const res = await fetch(
+    `${BASE}/api/snmp/sysobjectid?host=${encodeURIComponent(host)}&port=1161`
+  );
+  if (!res.ok) throw new Error(`SNMP sysObjectID failed: ${res.status}`);
+  const data = (await res.json()) as { sysobjectid: string };
+  return data.sysobjectid;
 }

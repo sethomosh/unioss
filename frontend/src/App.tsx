@@ -1,13 +1,14 @@
+// src/App.tsx
 import { useState } from 'react'
 import { NavLink, Routes, Route } from 'react-router-dom'
 
-import HealthPage      from './pages/HealthPage'
-import DiscoveryPage   from './pages/DiscoveryPage'
-import PerformancePage from './pages/PerformancePage'
-import TrafficPage     from './pages/TrafficPage'
-import AccessPage      from './pages/AccessPage'
-import SnmpPage        from './pages/SnmpPage'
-
+import HealthPage           from './pages/HealthPage'
+import DiscoveryPage        from './pages/DiscoveryPage'
+import DeviceDetailPage     from './pages/DeviceDetailPage' // ← import it
+import PerformancePage      from './pages/PerformancePage'
+import TrafficPage          from './pages/TrafficPage'
+import AccessPage           from './pages/AccessPage'
+import SnmpPage             from './pages/SnmpPage'
 
 import './App.css'
 
@@ -42,17 +43,22 @@ export default function App() {
             }
           />
 
-          <Route path="/discovery"   element={<DiscoveryPage />} />
-          <Route path="/performance" element={<PerformancePage />} />
-          <Route path="/traffic"     element={<TrafficPage />} />
-          <Route path="/access"      element={<AccessPage />} />
-          <Route path="/snmp"        element={<SnmpPage />} />
+          <Route path="/discovery"      element={<DiscoveryPage />} />
+          <Route path="/performance"    element={<PerformancePage />} />
+          <Route path="/traffic"        element={<TrafficPage />} />
+          <Route path="/access"         element={<AccessPage />} />
+          <Route path="/snmp"           element={<SnmpPage />} />
 
-          {/* optional: catch-all 404 route */}
+
+          {/* Drill‐down detail for a single device */}
+          <Route path="/devices/:ip" element={<DeviceDetailPage />} />
+
+
+
+          {/* optional: catch‐all 404 route */}
           <Route path="*" element={<h2>Page Not Found</h2>} />
         </Routes>
       </main>
     </div>
   )
 }
-

@@ -1,3 +1,5 @@
+// src/pages/PerformancePage.tsx
+
 import { useEffect, useState } from 'react'
 import { listPerformance, Performance } from '../utils/api'
 
@@ -22,10 +24,16 @@ export default function PerformancePage() {
       <ul>
         {metrics.map(p => (
           <li key={p.ip}>
-            {p.ip} — CPU: {p.cpu} — Mem: {p.memory} — Up: {p.uptime}
+            <strong>{p.ip}</strong> — CPU: {p.cpu ?? 'N/A'}% — Mem: {p.memory ?? 'N/A'}% — Up: {p.uptime ?? 'N/A'}s
+            <br />
+            {/* last_updated was renamed in API to “last_updated” */}
+            <small>Fetched at: {new Date(p.last_updated!).toLocaleString()}</small>
           </li>
         ))}
       </ul>
     </>
   )
 }
+
+// No changes needed here if your backend returns { cpu, memory, uptime, last_updated }.
+// Just confirm that the API’s JSON fields match these property names.
