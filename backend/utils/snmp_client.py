@@ -66,3 +66,28 @@ def snmp_walk(host: str, community: str, base_oid: str, port: int = 161, timeout
             for varBindRow in varBindTable:
                 for name, val in varBindRow:
                     yield (name.prettyPrint(), val.prettyPrint())
+
+def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = 161, timeout: int = 2, retries: int = 1):
+    """
+    Perform an SNMPv2c GET for multiple OIDs in one request.
+    Returns a dict { oid_str: value_str } or raises Exception on error/timeout.
+    """
+    object_types = [ ObjectType(ObjectIdentity(oid)) for oid in oids ]
+    iterator = getCmd(
+        SnmpEngine(),
+        CommunityData(community, mpModel=1),
+        UdpTransportTarget((host, port), timeout=timeout, retries=retries),
+        ContextData(),
+        *object_types
+    )
+    errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
+    if errorIndication:
+        raise Exception(f"SNMP BULK error: {errorIndication}")
+    elif errorStatus:
+        raise Exception(f"SNMP BULK {errorStatus.prettyPrint()} at {errorIndex}")
+    result = {}
+    for name, val in varBinds:
+        # strip off any textual MIB name so keys are pure numeric
+        numeric_oid = name.prettyPrint().split("::")[-1]
+        result[numeric_oid] = val.prettyPrint()
+    return result

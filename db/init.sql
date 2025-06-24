@@ -79,3 +79,14 @@ INSERT IGNORE INTO access_sessions
 VALUES
   ('alice', '192.168.1.10', 'AA:BB:CC:01:02:03', '2025-05-08 16:00:00', NULL,   NULL,     'snmp'),
   ('bob',   '192.168.1.11', 'AA:BB:CC:01:02:04', '2025-05-08 15:30:00', '2025-05-08 16:00:00', 1800, 'database');
+
+
+-- Persist last‐seen SNMP octet counters to compute deltas
+CREATE TABLE IF NOT EXISTS traffic_counters_last (
+  device_ip       VARCHAR(45)   NOT NULL,
+  interface_index INT           NOT NULL,
+  last_in_octets  BIGINT        NOT NULL,
+  last_out_octets BIGINT        NOT NULL,
+  last_seen       DATETIME      NOT NULL,
+  PRIMARY KEY (device_ip, interface_index)
+);

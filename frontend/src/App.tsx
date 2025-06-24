@@ -9,6 +9,8 @@ import PerformancePage      from './pages/PerformancePage'
 import TrafficPage          from './pages/TrafficPage'
 import AccessPage           from './pages/AccessPage'
 import SnmpPage             from './pages/SnmpPage'
+import PerformanceChartPage from './pages/PerformanceChartPage'
+import TrafficChartPage     from './pages/TrafficChartPage'
 
 import './App.css'
 
@@ -24,6 +26,8 @@ export default function App() {
         <NavLink to="/traffic">Traffic</NavLink> |{' '}
         <NavLink to="/access">Access</NavLink> |{' '}
         <NavLink to="/snmp">SNMP GET</NavLink>
+        {' '}| <NavLink to="/performance-charts">Perf Charts</NavLink> |{' '}
+        <NavLink to="/traffic-charts">Traffic Charts</NavLink>
       </nav>
 
       <main>
@@ -48,6 +52,9 @@ export default function App() {
           <Route path="/traffic"        element={<TrafficPage />} />
           <Route path="/access"         element={<AccessPage />} />
           <Route path="/snmp"           element={<SnmpPage />} />
+          {/* New chart routes: */}
+          <Route path="/performance-charts" element={<PerformanceChartPage />} />
+          <Route path="/traffic-charts"     element={<TrafficChartPage />} />
 
 
           {/* Drill‐down detail for a single device */}

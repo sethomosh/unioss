@@ -41,6 +41,21 @@ export async function listPerformance(): Promise<Array<{
   return res.json();
 }
 
+
+/** Fetch historical Performance metrics */
+export async function listPerformanceHistory(): Promise<Array<{
+  device_ip: string;
+  timestamp: string;
+  cpu_pct: number;
+  memory_pct: number;
+  uptime_secs: number;
+}>> {
+  const res = await fetch(`${BASE}/api/performance/history`)
+  if (!res.ok) throw new Error(`Perf history failed: ${res.status}`)
+  return res.json()
+}
+
+
 /** Traffic */
 export async function listTraffic(): Promise<Array<{
   device_ip: string;
@@ -54,6 +69,21 @@ export async function listTraffic(): Promise<Array<{
   const res = await fetch(`${BASE}/api/traffic/interfaces`);
   if (!res.ok) throw new Error(`Traffic failed: ${res.status}`);
   return res.json();
+}
+
+
+
+export async function listTrafficHistory(): Promise<Array<{
+  device_ip: string;
+  interface_index: number;
+  timestamp: string;
+  inbound_kbps: number | null;
+  outbound_kbps: number | null;
+  errors: number;
+}>> {
+  const res = await fetch(`${BASE}/api/traffic/history`)
+  if (!res.ok) throw new Error(`Traffic history failed: ${res.status}`)
+  return res.json()
 }
 
 /** Access sessions */
