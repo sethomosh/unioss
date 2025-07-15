@@ -28,18 +28,18 @@ services:
     ports:
       - "5000:5000"
     entrypoint: >
-     sh -c "
-       chown -R appuser:appuser /app/logs &&
-       /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
-       exec gunicorn -w 4 -b 0.0.0.0:5000 backend.app:app
-     "
+      sh -c "
+         /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
+        exec gunicorn -w 4 -b 0.0.0.0:5000 backend.app:app
+      "
     env_file:
       - .env
     extra_hosts:
       - "192.168.1.10:172.18.0.2"
       - "192.168.1.11:172.18.0.2"
     environment:
-      - MYSQL_DB=${MYSQL_DB}
+     SNMP_TARGET: snmpsim
+     MYSQL_DB: ${MYSQL_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -65,7 +65,7 @@ services:
     image: tandrup/snmpsim
     user: root
     volumes:
-      - ./snmp-sim/data:/usr/local/snmpsim/data
+     - ./snmp-sim/data/iface.snmprec:/usr/local/snmpsim/data/public.snmprec  
     ports:
       - "1161:1161/udp"
     command:

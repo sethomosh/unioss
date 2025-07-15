@@ -1,15 +1,18 @@
 # backend/modules/traffic.py
 
 from datetime import datetime
+import os
+from os import getenv
 from backend.utils.db import get_db_connection
 from backend.utils.snmp_client import snmp_walk
+SNMP_HOST = os.getenv("SNMP_TARGET", "snmpsim")
 import logging
 
 logger = logging.getLogger(__name__)
 
 # base OIDs for ifInOctets / ifOutOctets
-OID_IN  = "1.3.6.1.2.1.2.2.1.10"
-OID_OUT = "1.3.6.1.2.1.2.2.1.16"
+OID_IN  = ".1.3.6.1.2.1.2.2.1.10"
+OID_OUT = ".1.3.6.1.2.1.2.2.1.16"
 
 # maximum counter before wrap (assuming 32‑bit)
 COUNTER_MAX = 2**32
@@ -37,8 +40,8 @@ def get_traffic_stats():
     for dev in cur.fetchall():
         ip = dev["ip"]
         # walk in / out counters for this IP
-        in_rows  = list(snmp_walk(ip, "public", OID_IN, port=1161))
-        out_rows = list(snmp_walk(ip, "public", OID_OUT, port=1161))
+        in_rows  = list(snmp_walk(SNMP_HOST, "public", OID_IN,  port=1161))
+        out_rows = list(snmp_walk(SNMP_HOST, "public", OID_OUT, port=1161))
 
         # build a map idx → raw value
         in_map  = { int(oid.rsplit(".",1)[1]): int(val) for oid,val in in_rows }

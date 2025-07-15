@@ -8,7 +8,7 @@ from pysnmp.hlapi import (
     ObjectType,
     ObjectIdentity,
     getCmd,
-    bulkCmd,
+    nextCmd,
 )
 import logging
 
@@ -41,31 +41,31 @@ def snmp_get(host: str, community: str, oid: str, port: int = 161, timeout: int 
     raise Exception("SNMP GET: no varBinds returned")
 
 
-def snmp_walk(host: str, community: str, base_oid: str, port: int = 161, timeout: int = 2, retries: int = 1):
+def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
     """
-    Perform an SNMP WALK (GetBulk) under base_oid.
-    Yields tuples: (oid_string, value_string) for each returned variable.
+    Perform an SNMP WALK under base_oid using GETNEXT.
+    Yields tuples: (oid_string, value_string).
     """
-    iterator = bulkCmd(
+    iterator = nextCmd(
         SnmpEngine(),
         CommunityData(community, mpModel=1),
         UdpTransportTarget((host, port), timeout=timeout, retries=retries),
         ContextData(),
-        0, 25,  # non-repeaters, max-repetitions
         ObjectType(ObjectIdentity(base_oid)),
         lexicographicMode=False,
     )
 
-    for errorIndication, errorStatus, errorIndex, varBindTable in iterator:
+    for errorIndication, errorStatus, errorIndex, varBinds in iterator:
         if errorIndication:
             raise Exception(f"SNMP WALK error: {errorIndication}")
-        elif errorStatus:
+        if errorStatus:
             raise Exception(f"SNMP WALK {errorStatus.prettyPrint()} at {errorIndex}")
-        else:
-            # varBindTable is a list of rows; each row is a list of (ObjectIdentity, value)
-            for varBindRow in varBindTable:
-                for name, val in varBindRow:
-                    yield (name.prettyPrint(), val.prettyPrint())
+        for name, val in varBinds:
+            name_str = name.prettyPrint()
+            # stop if we've walked outside of our subtree
+            if not name_str.startswith(base_oid + "."):
+                return
+            yield (name_str, val.prettyPrint())
 
 def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = 161, timeout: int = 2, retries: int = 1):
     """
