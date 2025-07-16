@@ -61,11 +61,8 @@ def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
         if errorStatus:
             raise Exception(f"SNMP WALK {errorStatus.prettyPrint()} at {errorIndex}")
         for name, val in varBinds:
-            name_str = name.prettyPrint()
-            # stop if we've walked outside of our subtree
-            if not name_str.startswith(base_oid + "."):
-                return
-            yield (name_str, val.prettyPrint())
+            # yield *everything* we get back
+            yield (name.prettyPrint(), val.prettyPrint())
 
 def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = 161, timeout: int = 2, retries: int = 1):
     """

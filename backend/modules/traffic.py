@@ -3,6 +3,7 @@
 from datetime import datetime
 import os
 from os import getenv
+from backend.utils.snmp_client import snmp_get
 from backend.utils.db import get_db_connection
 from backend.utils.snmp_client import snmp_walk
 SNMP_HOST = os.getenv("SNMP_TARGET", "snmpsim")
@@ -11,8 +12,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # base OIDs for ifInOctets / ifOutOctets
-OID_IN  = ".1.3.6.1.2.1.2.2.1.10"
-OID_OUT = ".1.3.6.1.2.1.2.2.1.16"
+OID_IN  = "1.3.6.1.2.1.2.2.1.10"
+OID_OUT = "1.3.6.1.2.1.2.2.1.16"
 
 # maximum counter before wrap (assuming 32‑bit)
 COUNTER_MAX = 2**32
@@ -40,12 +41,29 @@ def get_traffic_stats():
     for dev in cur.fetchall():
         ip = dev["ip"]
         # walk in / out counters for this IP
-        in_rows  = list(snmp_walk(SNMP_HOST, "public", OID_IN,  port=1161))
-        out_rows = list(snmp_walk(SNMP_HOST, "public", OID_OUT, port=1161))
+        logger.info(f"→ Processing device {ip!r}")
+        # 2a) find how many interfaces
+        if_number_oid = "1.3.6.1.2.1.2.1.0"  # ifNumber
+        try:
+            num_ifs = int(snmp_get(ip, "public", if_number_oid, port=1161))
+        except Exception as e:
+            logger.error(f"Failed to fetch ifNumber: {e}")
+            continue
 
-        # build a map idx → raw value
-        in_map  = { int(oid.rsplit(".",1)[1]): int(val) for oid,val in in_rows }
-        out_map = { int(oid.rsplit(".",1)[1]): int(val) for oid,val in out_rows }
+        # 2b) for each index, do GET
+        in_map = {}
+        out_map = {}
+        
+        for idx in range(1, num_ifs + 1):
+            try:
+                in_raw = int(snmp_get(ip, "public", f"{OID_IN}.{idx}", port=1161))
+                out_raw = int(snmp_get(ip, "public", f"{OID_OUT}.{idx}", port=1161))
+            except Exception as e:
+                logger.warning(f"SNMP GET failed for idx={idx}: {e}")
+                continue
+            in_map[idx] = in_raw
+            out_map[idx] = out_raw
+        logger.info(f"   num_ifs={num_ifs}, in_map={in_map}, out_map={out_map}")
 
         for idx, in_raw in in_map.items():
             out_raw = out_map.get(idx, 0)
@@ -66,7 +84,7 @@ def get_traffic_stats():
                 outbound_kbps = round((out_delta * 8) / (delta_s * 1000), 2)
             else:
                 # no prior: report None (or 0)
-                inbound_kbps = outbound_kbps = None
+                inbound_kbps = outbound_kbps = 0.0
 
             # 3) upsert raw counters into traffic_counters_last
             cur.execute("""
@@ -85,6 +103,12 @@ def get_traffic_stats():
                   (device_ip, interface_index, timestamp, inbound_kbps, outbound_kbps, errors)
                 VALUES (%s,%s,%s,%s,%s,%s)
             """, (ip, idx, now, inbound_kbps, outbound_kbps, 0))
+
+            logger.info(
+                f"[SNAPSHOT] ip={ip}, idx={idx}, in_raw={in_raw}, out_raw={out_raw}, "
+                f"in_kbps={inbound_kbps}, out_kbps={outbound_kbps}, last={bool(last)}"
+            )
+
 
             snapshot.append({
                 "device_ip":       ip,
