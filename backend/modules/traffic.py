@@ -45,7 +45,7 @@ def get_traffic_stats():
         # 2a) find how many interfaces
         if_number_oid = "1.3.6.1.2.1.2.1.0"  # ifNumber
         try:
-            num_ifs = int(snmp_get(ip, "public", if_number_oid, port=1161))
+            num_ifs = int(snmp_get(SNMP_HOST, "public", if_number_oid, port=1161))
         except Exception as e:
             logger.error(f"Failed to fetch ifNumber: {e}")
             continue
@@ -56,8 +56,8 @@ def get_traffic_stats():
         
         for idx in range(1, num_ifs + 1):
             try:
-                in_raw = int(snmp_get(ip, "public", f"{OID_IN}.{idx}", port=1161))
-                out_raw = int(snmp_get(ip, "public", f"{OID_OUT}.{idx}", port=1161))
+                in_raw = int(snmp_get(SNMP_HOST, "public", f"{OID_IN}.{idx}", port=1161))
+                out_raw = int(snmp_get(SNMP_HOST, "public", f"{OID_OUT}.{idx}", port=1161))
             except Exception as e:
                 logger.warning(f"SNMP GET failed for idx={idx}: {e}")
                 continue
@@ -65,6 +65,10 @@ def get_traffic_stats():
             out_map[idx] = out_raw
         logger.info(f"   num_ifs={num_ifs}, in_map={in_map}, out_map={out_map}")
 
+        if not in_map:
+            logger.warning(f"No SNMP counters for {ip!r}: in_map empty, out_map={out_map}")
+            continue
+        
         for idx, in_raw in in_map.items():
             out_raw = out_map.get(idx, 0)
             key = (ip, idx)
