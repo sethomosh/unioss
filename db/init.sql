@@ -49,15 +49,16 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
 
 -- Table: traffic_metrics
 CREATE TABLE IF NOT EXISTS traffic_metrics (
-  id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
-  device_ip          VARCHAR(45)    NOT NULL,
-  interface_index    INT            NOT NULL,
-  timestamp          DATETIME       NOT NULL,
-  inbound_kbps       DECIMAL(10,2)  NOT NULL,
-  outbound_kbps      DECIMAL(10,2)  NOT NULL,
-  errors             INT            DEFAULT 0,
-  INDEX (device_ip),
-  INDEX (interface_index, timestamp)
+  device_ip        VARCHAR(45)   NOT NULL,
+  interface_index  INT           NOT NULL,
+  iface_name       VARCHAR(128)  NOT NULL DEFAULT '',
+  inbound_kbps     DOUBLE        NOT NULL,
+  outbound_kbps    DOUBLE        NOT NULL,
+  in_errors        INT           NOT NULL DEFAULT 0,
+  out_errors       INT           NOT NULL DEFAULT 0,
+  errors           INT           NOT NULL DEFAULT 0,
+  timestamp        DATETIME(6)   NOT NULL,
+  PRIMARY KEY(device_ip, interface_index, timestamp)
 );
 
 -- Table: access_sessions
@@ -83,10 +84,14 @@ VALUES
 
 -- Persist last‐seen SNMP octet counters to compute deltas
 CREATE TABLE IF NOT EXISTS traffic_counters_last (
-  device_ip       VARCHAR(45)   NOT NULL,
-  interface_index INT           NOT NULL,
-  last_in_octets  BIGINT        NOT NULL,
-  last_out_octets BIGINT        NOT NULL,
-  last_seen       DATETIME      NOT NULL,
-  PRIMARY KEY (device_ip, interface_index)
+  device_ip        VARCHAR(45)   NOT NULL,
+  interface_index  INT           NOT NULL,
+  iface_name       VARCHAR(128)  NOT NULL DEFAULT '',
+  inbound_kbps     DOUBLE        NOT NULL,
+  outbound_kbps    DOUBLE        NOT NULL,
+  in_errors        INT           NOT NULL DEFAULT 0,
+  out_errors       INT           NOT NULL DEFAULT 0,
+  errors           INT           NOT NULL DEFAULT 0,
+  timestamp        DATETIME(6)   NOT NULL,
+  PRIMARY KEY(device_ip, interface_index)
 );

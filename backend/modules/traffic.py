@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 OID_IN  = "1.3.6.1.2.1.2.2.1.10"
 OID_OUT = "1.3.6.1.2.1.2.2.1.16"
 
+
+# ── new SNMP OIDs ───────────────────────────────────────────────
+OID_IF_DESCR    = "1.3.6.1.2.1.2.2.1.2"   # interface names
+OID_IF_IN_ERR   = "1.3.6.1.2.1.2.2.1.14"  # inErrors
+OID_IF_OUT_ERR  = "1.3.6.1.2.1.2.2.1.20"  # outErrors
+
+
 # maximum counter before wrap (assuming 32‑bit)
 COUNTER_MAX = 2**32
 
@@ -128,3 +135,4 @@ def get_traffic_stats():
     conn.close()
     logger.info(f"Snapshot {len(snapshot)} traffic entries at {now.isoformat()}Z")
     return snapshot
+

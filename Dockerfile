@@ -59,3 +59,5 @@ CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "backend.app:app"]
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \
     CMD curl -f http://localhost:5000/health || exit 1
+
+
