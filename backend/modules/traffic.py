@@ -60,16 +60,23 @@ def get_traffic_stats():
         # 2b) for each index, do GET
         in_map = {}
         out_map = {}
-        
+        in_err_map = {}
+        out_err_map = {}
+
         for idx in range(1, num_ifs + 1):
             try:
-                in_raw = int(snmp_get(SNMP_HOST, "public", f"{OID_IN}.{idx}", port=1161))
-                out_raw = int(snmp_get(SNMP_HOST, "public", f"{OID_OUT}.{idx}", port=1161))
+                in_raw      = int(snmp_get(SNMP_HOST, "public", f"{OID_IN}.{idx}",      port=1161))
+                out_raw     = int(snmp_get(SNMP_HOST, "public", f"{OID_OUT}.{idx}",     port=1161))
+                in_err_raw  = int(snmp_get(SNMP_HOST, "public", f"{OID_IF_IN_ERR}.{idx}",  port=1161))
+                out_err_raw = int(snmp_get(SNMP_HOST, "public", f"{OID_IF_OUT_ERR}.{idx}", port=1161))
+
             except Exception as e:
                 logger.warning(f"SNMP GET failed for idx={idx}: {e}")
                 continue
-            in_map[idx] = in_raw
-            out_map[idx] = out_raw
+            in_map[idx]       = in_raw
+            out_map[idx]      = out_raw
+            in_err_map[idx]   = in_err_raw
+            out_err_map[idx]  = out_err_raw
         logger.info(f"   num_ifs={num_ifs}, in_map={in_map}, out_map={out_map}")
 
         if not in_map:
@@ -93,27 +100,44 @@ def get_traffic_stats():
                 # bits → kilobits/s
                 inbound_kbps  = round((in_delta  * 8) / (delta_s * 1000), 2)
                 outbound_kbps = round((out_delta * 8) / (delta_s * 1000), 2)
+                # error wrap logic (same as octets)
+                in_err_delta  = in_err_raw   - last["last_in_errors"]
+                out_err_delta = out_err_raw  - last["last_out_errors"]
+                if in_err_delta  < 0: in_err_delta  += COUNTER_MAX
+                if out_err_delta < 0: out_err_delta += COUNTER_MAX
+                # errors per interval
+                in_errors  = in_err_delta
+                out_errors = out_err_delta
+                errors     = in_errors + out_errors
             else:
                 # no prior: report None (or 0)
                 inbound_kbps = outbound_kbps = 0.0
+                in_errors = out_errors = errors = 0
 
             # 3) upsert raw counters into traffic_counters_last
             cur.execute("""
                 INSERT INTO traffic_counters_last
-                  (device_ip, interface_index, last_in_octets, last_out_octets, last_seen)
+                  (device_ip, interface_index,
+                   last_in_octets, last_out_octets,
+                   last_in_errors, last_out_errors,
+                   last_seen)
                 VALUES (%s,%s,%s,%s,%s)
                 ON DUPLICATE KEY UPDATE
                   last_in_octets = VALUES(last_in_octets),
                   last_out_octets = VALUES(last_out_octets),
+                  last_in_errors  = VALUES(last_in_errors),
+                  last_out_errors = VALUES(last_out_errors),
                   last_seen = VALUES(last_seen)
             """, (ip, idx, in_raw, out_raw, now))
 
             # 4) insert into traffic_metrics
             cur.execute("""
                 INSERT INTO traffic_metrics
-                  (device_ip, interface_index, timestamp, inbound_kbps, outbound_kbps, errors)
-                VALUES (%s,%s,%s,%s,%s,%s)
-            """, (ip, idx, now, inbound_kbps, outbound_kbps, 0))
+                  (device_ip, interface_index, timestamp,
+                   inbound_kbps, outbound_kbps,
+                   in_errors, out_errors, errors) 
+               VALUES (%s,%s,%s,%s,%s,%s)
+            """, (ip, idx, now, inbound_kbps, outbound_kbps, in_errors, out_errors, errors))
 
             logger.info(
                 f"[SNAPSHOT] ip={ip}, idx={idx}, in_raw={in_raw}, out_raw={out_raw}, "
@@ -136,3 +160,9 @@ def get_traffic_stats():
     logger.info(f"Snapshot {len(snapshot)} traffic entries at {now.isoformat()}Z")
     return snapshot
 
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+    get_traffic_stats()

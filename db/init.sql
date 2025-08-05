@@ -87,11 +87,10 @@ CREATE TABLE IF NOT EXISTS traffic_counters_last (
   device_ip        VARCHAR(45)   NOT NULL,
   interface_index  INT           NOT NULL,
   iface_name       VARCHAR(128)  NOT NULL DEFAULT '',
-  inbound_kbps     DOUBLE        NOT NULL,
-  outbound_kbps    DOUBLE        NOT NULL,
-  in_errors        INT           NOT NULL DEFAULT 0,
-  out_errors       INT           NOT NULL DEFAULT 0,
-  errors           INT           NOT NULL DEFAULT 0,
-  timestamp        DATETIME(6)   NOT NULL,
+  last_in_octets   BIGINT        NOT NULL DEFAULT 0,
+  last_out_octets  BIGINT        NOT NULL DEFAULT 0,
+  last_in_errors   INT           NOT NULL DEFAULT 0,
+  last_out_errors  INT           NOT NULL DEFAULT 0,
+  last_seen        DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY(device_ip, interface_index)
 );
