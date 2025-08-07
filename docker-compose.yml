@@ -47,7 +47,7 @@ services:
       snmpsim:
         condition: service_healthy
     volumes:
-      - logs-data:/app/logs:rw,uid=101,gid=101
+      - logs-data:/app/logs:rw
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
       interval: 30s

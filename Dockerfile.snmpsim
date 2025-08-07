@@ -1,4 +1,3 @@
-# Dockerfile.snmpsim
 FROM tandrup/snmpsim:latest
 USER root
 
@@ -8,8 +7,12 @@ RUN sed -i \
     -e '/stretch-updates/ s/^/#/' \
     /etc/apt/sources.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends curl snmp \
+    -o Acquire::Check-Valid-Until=false \
+    -o Acquire::AllowInsecureRepositories=true \
+    && apt-get install -y \
+    --no-install-recommends \
+    --allow-unauthenticated \
+    curl snmp \
     && rm -rf /var/lib/apt/lists/*
 
-# back to unprivileged
 USER nobody:nogroup

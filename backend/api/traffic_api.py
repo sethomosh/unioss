@@ -72,6 +72,8 @@ def traffic_history():
               DATE_FORMAT(timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
               inbound_kbps,
               outbound_kbps,
+              in_errors,
+              out_errors,
               errors
             FROM traffic_metrics
             ORDER BY timestamp ASC

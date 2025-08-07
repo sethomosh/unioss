@@ -43,6 +43,7 @@ def create_app():
         with app.app_context():
             # this will fetch & persist traffic_metrics
             _snapshot_traffic()
+    
 
     # schedule every minute (adjust as needed)
     sched.add_job(perf_job,    'interval', minutes=1, id='perf_snapshot')
@@ -58,8 +59,35 @@ def create_app():
 
     # ── Seed initial snapshots immediately ───────────────────────────────────
     perf_job()
-    traffic_job()
+#    traffic_job()
     # ────────────────────────────────────────────────────────────────────────
+    def backfill_traffic_counters():
+        from backend.utils.db import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO traffic_counters_last
+            (device_ip, interface_index,
+            last_in_errors, last_out_errors,
+            last_seen)
+            SELECT
+            device_ip,
+            interface_index,
+            MAX(in_errors) AS last_in_errors,
+            MAX(out_errors) AS last_out_errors,
+            MAX(timestamp)     AS last_seen
+            FROM traffic_metrics
+            GROUP BY device_ip, interface_index
+            ON DUPLICATE KEY UPDATE
+            last_in_errors = VALUES(last_in_errors),
+            last_out_errors= VALUES(last_out_errors),
+            last_seen      = VALUES(last_seen)
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    backfill_traffic_counters()
 
     # make sure scheduler shut down on exit
     @app.teardown_appcontext

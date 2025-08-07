@@ -72,18 +72,21 @@ def get_performance_metrics():
         cpu_pct = cpu_user if cpu_user is not None else (100 - cpu_idle if cpu_idle is not None else None)
 
         # ── Persist into MySQL ─────────────────────────────────── #
-        cursor.execute(
-            "INSERT INTO performance_metrics "
-            "(device_ip, timestamp, cpu_pct, memory_pct, uptime_secs) "
-            "VALUES (%s,%s,%s,%s,%s)",
-            (
-                ip,
-                ts.replace("T", " ").rstrip("Z"),    # convert to MySQL DATETIME
-                cpu_pct or 0,
-                mem_pct or 0,
-                uptime_secs or 0
+        try:
+            cursor.execute(
+                "INSERT INTO performance_metrics "
+                "(device_ip, timestamp, cpu_pct, memory_pct, uptime_secs) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (
+                    ip,
+                    ts.replace("T", " ").rstrip("Z"),  # MySQL DATETIME
+                    cpu_pct if cpu_pct is not None else 0,
+                    mem_pct  if mem_pct  is not None else 0,
+                    uptime_secs if uptime_secs is not None else 0
+                )
             )
-        )
+        except Exception as e:
+            logger.error(f"Failed to insert performance_metrics for {ip} at {ts}: {e}")
 
         # ── Build API response ──────────────────────────────────── #
         results.append({

@@ -11,6 +11,7 @@ from pysnmp.hlapi import (
     nextCmd,
 )
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -64,27 +65,57 @@ def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
             # yield *everything* we get back
             yield (name.prettyPrint(), val.prettyPrint())
 
-def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = 161, timeout: int = 2, retries: int = 1):
+def snmp_get_bulk(
+    host: str,
+    community: str,
+    oids: list[str],
+    port: int = 161,
+    timeout: int = 2,
+    retries: int = 1
+) -> dict[str, str]:
     """
-    Perform an SNMPv2c GET for multiple OIDs in one request.
-    Returns a dict { oid_str: value_str } or raises Exception on error/timeout.
+    Perform an SNMPv2c GET for multiple OIDs in one request with retry/backoff.
     """
-    object_types = [ ObjectType(ObjectIdentity(oid)) for oid in oids ]
-    iterator = getCmd(
-        SnmpEngine(),
-        CommunityData(community, mpModel=1),
-        UdpTransportTarget((host, port), timeout=timeout, retries=retries),
-        ContextData(),
-        *object_types
-    )
-    errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
-    if errorIndication:
-        raise Exception(f"SNMP BULK error: {errorIndication}")
-    elif errorStatus:
-        raise Exception(f"SNMP BULK {errorStatus.prettyPrint()} at {errorIndex}")
-    result = {}
-    for name, val in varBinds:
-        # strip off any textual MIB name so keys are pure numeric
-        numeric_oid = name.prettyPrint().split("::")[-1]
-        result[numeric_oid] = val.prettyPrint()
-    return result
+    attempt, delay = 0, 1
+    last_error = None
+
+    while attempt <= retries:
+        types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
+        try:
+            iterator = getCmd(
+                SnmpEngine(),
+                CommunityData(community, mpModel=1),
+                UdpTransportTarget((host, port), timeout=timeout, retries=0),
+                ContextData(),
+                *types
+            )
+            errorIndication, errorStatus, _, varBinds = next(iterator)
+        except Exception as e:
+            # catch transport or name‐resolution errors
+            last_error = str(e)
+            logger.warning(
+                f"snmp_get_bulk attempt {attempt+1} error invoking SNMP: {last_error}; retrying in {delay}s"
+            )
+            time.sleep(delay)
+            delay *= 2
+            attempt += 1
+            continue
+
+        if not errorIndication and not errorStatus:
+            result = {}
+            for name, val in varBinds:
+                key = name.prettyPrint().split("::")[-1]
+                result[key] = val.prettyPrint()
+            return result
+
+        # SNMP returned an indication or status
+        last_error = errorIndication or errorStatus.prettyPrint()
+        logger.warning(
+            f"snmp_get_bulk attempt {attempt+1} failed: {last_error}; retrying in {delay}s"
+        )
+        time.sleep(delay)
+        delay *= 2
+        attempt += 1
+
+    # all attempts exhausted
+    raise Exception(f"snmp_get_bulk failed after {retries+1} attempts: {last_error}")

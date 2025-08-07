@@ -30,7 +30,7 @@ def get_traffic_stats():
     Walk raw SNMP counters + names, compute kbps deltas vs. last seen,
     upsert raw counters into traffic_counters_last, insert traffic_metrics.
     """
-    now = datetime.utcnow()
+    
     conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
 
@@ -102,6 +102,7 @@ def get_traffic_stats():
 
         # 3) compute deltas & write
         for idx, in_raw in in_map.items():
+            now = datetime.utcnow()
             out_raw    = out_map.get(idx, 0)
             in_err_raw = in_err_map.get(idx, 0)
             out_err_raw= out_err_map.get(idx, 0)
@@ -153,20 +154,24 @@ def get_traffic_stats():
             ))
 
             # 3b) insert into traffic_metrics
-            cur.execute("""
-                INSERT INTO traffic_metrics
-                  (device_ip, interface_index, iface_name,
-                   inbound_kbps, outbound_kbps,
-                   in_errors, out_errors, errors,
-                   timestamp)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (
-                ip, idx, name,
-                inbound_kbps, outbound_kbps,
-                in_errors, out_errors, errors,
-                now
-            ))
-
+            # quietly skip any row where (device_ip,interface_index,timestamp) already exists
+            try:
+                cur.execute("""
+                    INSERT INTO traffic_metrics
+                    (device_ip, interface_index, iface_name,
+                    inbound_kbps, outbound_kbps,
+                    in_errors, out_errors, errors,
+                    timestamp)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    ip, idx, name,
+                    inbound_kbps, outbound_kbps,
+                    in_errors, out_errors, errors,
+                    now
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to insert traffic_metrics for {ip} idx={idx} at {now.isoformat()}Z: {e}")
+                conn.rollback()
             logger.info(
                 f"[SNAPSHOT] {ip} idx={idx} "
                 f"in={inbound_kbps}kbps out={outbound_kbps}kbps "
@@ -189,7 +194,7 @@ def get_traffic_stats():
     cur.close()
     conn.close()
 
-    logger.info(f"Snapshot {len(snapshot)} entries at {now.isoformat()}Z")
+    logger.info(f"Snapshot {len(snapshot)} entries at {datetime.utcnow().isoformat()}Z")
     return snapshot
 
 
