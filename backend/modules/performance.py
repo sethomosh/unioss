@@ -15,6 +15,16 @@ MEM_TOTAL_OID     = "1.3.6.1.4.1.2021.4.5.0"    # memTotal
 MEM_AVAILABLE_OID = "1.3.6.1.4.1.2021.4.6.0"    # memAvail
 UPTIME_TICKS_OID  = "1.3.6.1.2.1.1.3.0"         # sysUpTime
 
+def safe_float(value, default=0.0):
+    try:
+        f = float(value)
+        return f if not (f != f) else default  # NaN check: NaN != NaN is always True
+    except Exception:
+        return default
+
+
+
+
 def get_performance_metrics():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -69,7 +79,11 @@ def get_performance_metrics():
                 uptime_secs = None
 
         # ── Derive a single CPU-percent metric ──────────────────── #
-        cpu_pct = cpu_user if cpu_user is not None else (100 - cpu_idle if cpu_idle is not None else None)
+        cpu_pct = (
+            cpu_user if cpu_user is not None else
+            (100 - cpu_idle if cpu_idle is not None else 0)  # fallback to 0
+        )
+
 
         # ── Persist into MySQL ─────────────────────────────────── #
         try:
@@ -80,11 +94,12 @@ def get_performance_metrics():
                 (
                     ip,
                     ts.replace("T", " ").rstrip("Z"),  # MySQL DATETIME
-                    cpu_pct if cpu_pct is not None else 0,
-                    mem_pct  if mem_pct  is not None else 0,
-                    uptime_secs if uptime_secs is not None else 0
+                    safe_float(cpu_pct, 0.0),
+                    safe_float(mem_pct, 0.0),
+                    int(uptime_secs or 0)
                 )
             )
+
         except Exception as e:
             logger.error(f"Failed to insert performance_metrics for {ip} at {ts}: {e}")
 

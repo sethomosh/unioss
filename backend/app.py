@@ -1,4 +1,5 @@
-from flask import Flask
+
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -14,7 +15,7 @@ from backend.api.health_api import health_api
 
 def create_app():
     app = Flask(__name__)
-    CORS(app)
+
     app.config.from_object('backend.config.settings')
 
     #Enable CORS globally

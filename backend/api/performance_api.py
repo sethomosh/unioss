@@ -80,3 +80,23 @@ def performance_history():
     except Exception as e:
         current_app.logger.error(f"Performance history error: {e}\n{traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
+
+
+@performance_api.route('/metrics', methods=['GET'])
+def performance_metrics():
+    try:
+        raw = get_performance_metrics()
+        response = [
+            {
+                "ip":           p["ip"],
+                "cpu":          p.get("cpu", 0),
+                "memory":       p.get("memory", 0),
+                "uptime":       p.get("uptime", "0"),
+                "last_updated": p.get("last_updated")
+            }
+            for p in raw
+        ]
+        return jsonify(response), 200
+    except Exception as e:
+        current_app.logger.error(f"Performance /metrics error: {e}")
+        return jsonify({"error": str(e)}), 500

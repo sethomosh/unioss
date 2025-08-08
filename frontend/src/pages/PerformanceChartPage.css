@@ -1,0 +1,12 @@
+/* frontend/src/pages/PerformanceChartPage.css */
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+.perf-card {
+  border: 1px solid #e0e0e0;
+  padding: 0.5rem;
+  border-radius: 6px;
+  background: white;
+}

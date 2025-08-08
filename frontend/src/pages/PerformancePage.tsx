@@ -1,5 +1,4 @@
-// src/pages/PerformancePage.tsx
-
+// frontend/src/pages/PerformancePage.tsx
 import { useEffect, useState } from 'react'
 import { listPerformance, Performance } from '../utils/api'
 
@@ -9,14 +8,21 @@ export default function PerformancePage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    let mounted = true
     listPerformance()
-      .then(ms => setMetrics(ms))
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false))
+      .then(ms => {
+        if (mounted) setMetrics(ms)
+      })
+      .catch(err => {
+        if (mounted) setError(err.message ?? String(err))
+      })
+      .finally(() => { if (mounted) setLoading(false) })
+    return () => { mounted = false }
   }, [])
 
   if (loading) return <p>Loading performance…</p>
   if (error)   return <p style={{ color: 'red' }}>Error: {error}</p>
+  if (metrics.length === 0) return <p>No devices found.</p>
 
   return (
     <>
@@ -24,16 +30,12 @@ export default function PerformancePage() {
       <ul>
         {metrics.map(p => (
           <li key={p.ip}>
-            <strong>{p.ip}</strong> — CPU: {p.cpu ?? 'N/A'}% — Mem: {p.memory ?? 'N/A'}% — Up: {p.uptime ?? 'N/A'}s
+            <strong>{p.ip}</strong> — CPU: {p.cpu ?? 'N/A'}% — Mem: {p.memory ?? 'N/A'}% — Up: {p.uptime ?? 'N/A'}
             <br />
-            {/* last_updated was renamed in API to “last_updated” */}
-            <small>Fetched at: {new Date(p.last_updated!).toLocaleString()}</small>
+            <small>Fetched at: {p.last_updated ? new Date(p.last_updated).toLocaleString() : '—'}</small>
           </li>
         ))}
       </ul>
     </>
   )
 }
-
-// No changes needed here if your backend returns { cpu, memory, uptime, last_updated }.
-// Just confirm that the API’s JSON fields match these property names.
