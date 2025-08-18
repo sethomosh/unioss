@@ -43,7 +43,7 @@ def poll_device(ip: str, community: str = "public", port: int = 1161) -> dict:
             else (100 - cpu_idle if cpu_idle is not None else None)
         )
 
-        uptime_secs = float(uptime_ticks / 100) if uptime_ticks is not None else None
+        uptime_secs = int(uptime_ticks / 100) if uptime_ticks is not None else None
 
         return {
             "device_ip": ip,
@@ -160,7 +160,7 @@ def get_performance_metrics():
             if total_mem is not None and avail_mem is not None and total_mem > 0:
                 mem_pct = round(((total_mem - avail_mem) / total_mem) * 100, 2)
             if uptime_ticks is not None:
-                uptime_secs = float(uptime_ticks / 100)
+                uptime_secs = int(uptime_ticks / 100)
 
         except Exception as bulk_err:
             logger.warning("SNMP bulk error for %s (host=%s community=%s): %s", ip, bulk_host, community, bulk_err)
@@ -183,7 +183,7 @@ def get_performance_metrics():
                 mem_pct = None
             try:
                 uptime_ticks = safe_float(snmp_get(ip, community, UPTIME_TICKS_OID, port=snmp_port))
-                uptime_secs = float(uptime_ticks / 100) if uptime_ticks is not None else None
+                uptime_secs = int(uptime_ticks / 100) if uptime_ticks is not None else None
             except Exception:
                 uptime_secs = None
 
@@ -211,7 +211,7 @@ def get_performance_metrics():
                     ts.replace("T", " ").rstrip("Z"),
                     safe_float(cpu_pct, None),
                     safe_float(mem_pct, None),
-                    (float(uptime_secs) if uptime_secs is not None else None)
+                    (int(uptime_secs) if uptime_secs is not None else None)
                 )
             )
         except Exception as e:

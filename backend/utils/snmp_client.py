@@ -1,5 +1,4 @@
 # backend/utils/snmp_client.py
-
 from pysnmp.hlapi import (
     SnmpEngine,
     CommunityData,
@@ -12,13 +11,44 @@ from pysnmp.hlapi import (
 )
 import logging
 import time
+import re
 
 logger = logging.getLogger(__name__)
 
+_NO_INSTANCE_STRS = ("No Such Instance", "No Such Object", "noSuchInstance", "noSuchObject")
+
+def _normalize_value(val):
+    if val is None:
+        return None
+    # pysnmp objects provide prettyPrint(), else str()
+    s = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
+    # handle common SNMP 'noSuch' responses
+    if any(tok in s for tok in _NO_INSTANCE_STRS):
+        return None
+
+    # try to reduce common typed outputs like:
+    # "Timeticks: (12345678) 1 day, 10:11:12.34" -> return "12345678"
+    # "Counter32: 100000" -> return "100000"
+    import re
+    m = re.search(r'\(?(\d{1,})\)?', s)
+    if m and m.group(1):
+        # prefer a pure digits string
+        return m.group(1)
+
+    # fallback: return raw string
+    return s
+
+def _numeric_oid_from_name(name_pretty: str) -> str:
+    # e.g. "SNMPv2-SMI::mib-2.1.1.0" or "sysUpTime.0" or "1.3.6.1.2.1.1.3.0"
+    m = re.search(r'(\d+(?:\.\d+)+)', name_pretty)
+    if m:
+        return m.group(1)
+    # fallback: last part after ::
+    return name_pretty.split("::")[-1]
+
 def snmp_get(host: str, community: str, oid: str, port: int = 161, timeout: int = 2, retries: int = 1):
     """
-    Perform an SNMPv2c GET for a single OID.
-    Returns the value as a Python primitive (int, str, etc.), or raises Exception on timeout/error.
+    SNMP GET for single OID. Returns string value or None on "no such instance", raises on transport errors.
     """
     iterator = getCmd(
         SnmpEngine(),
@@ -32,21 +62,14 @@ def snmp_get(host: str, community: str, oid: str, port: int = 161, timeout: int 
 
     if errorIndication:
         raise Exception(f"SNMP GET error: {errorIndication}")
-    elif errorStatus:
+    if errorStatus:
         raise Exception(f"SNMP GET {errorStatus.prettyPrint()} at {errorIndex}")
-    else:
-        # varBinds: list of (ObjectIdentity, value)
-        for name, val in varBinds:
-            # Return Python primitive (int, OctetString, etc.)
-            return val.prettyPrint()
+    for name, val in varBinds:
+        return _normalize_value(val)
     raise Exception("SNMP GET: no varBinds returned")
 
 
 def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
-    """
-    Perform an SNMP WALK under base_oid using GETNEXT.
-    Yields tuples: (oid_string, value_string).
-    """
     iterator = nextCmd(
         SnmpEngine(),
         CommunityData(community, mpModel=1),
@@ -62,8 +85,8 @@ def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
         if errorStatus:
             raise Exception(f"SNMP WALK {errorStatus.prettyPrint()} at {errorIndex}")
         for name, val in varBinds:
-            # yield *everything* we get back
-            yield (name.prettyPrint(), val.prettyPrint())
+            yield (_numeric_oid_from_name(name.prettyPrint()), _normalize_value(val))
+
 
 def snmp_get_bulk(
     host: str,
@@ -72,9 +95,9 @@ def snmp_get_bulk(
     port: int = 161,
     timeout: int = 2,
     retries: int = 1
-) -> dict[str, str]:
+) -> dict:
     """
-    Perform an SNMPv2c GET for multiple OIDs in one request with retry/backoff.
+    GET several OIDs in one request. Returns dict numeric_oid -> (string|None)
     """
     attempt, delay = 0, 1
     last_error = None
@@ -91,7 +114,6 @@ def snmp_get_bulk(
             )
             errorIndication, errorStatus, _, varBinds = next(iterator)
         except Exception as e:
-            # catch transport or name‐resolution errors
             last_error = str(e)
             logger.warning(
                 f"snmp_get_bulk attempt {attempt+1} error invoking SNMP: {last_error}; retrying in {delay}s"
@@ -104,12 +126,11 @@ def snmp_get_bulk(
         if not errorIndication and not errorStatus:
             result = {}
             for name, val in varBinds:
-                key = name.prettyPrint().split("::")[-1]
-                result[key] = val.prettyPrint()
+                key = _numeric_oid_from_name(name.prettyPrint())
+                result[key] = _normalize_value(val)
             return result
 
-        # SNMP returned an indication or status
-        last_error = errorIndication or errorStatus.prettyPrint()
+        last_error = errorIndication or (errorStatus.prettyPrint() if errorStatus else "unknown")
         logger.warning(
             f"snmp_get_bulk attempt {attempt+1} failed: {last_error}; retrying in {delay}s"
         )
@@ -117,5 +138,4 @@ def snmp_get_bulk(
         delay *= 2
         attempt += 1
 
-    # all attempts exhausted
     raise Exception(f"snmp_get_bulk failed after {retries+1} attempts: {last_error}")

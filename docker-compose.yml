@@ -1,4 +1,5 @@
-#version: "2.4"
+version: "2.4"
+
 services:
   db:
     image: mysql:8.0
@@ -13,7 +14,6 @@ services:
     volumes:
       - db_data:/var/lib/mysql
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
-#      - ./docker/db/initdb/20250729_add_iface_and_errors.sql:/docker-entrypoint-initdb.d/20250729_add_iface_and_errors.sql
     ports:
       - "127.0.0.1:3307:3306"
     healthcheck:
@@ -31,7 +31,7 @@ services:
     entrypoint: >
       sh -c "
          /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
-        exec gunicorn -w 4 -b 0.0.0.0:5000 backend.app:app
+         exec gunicorn -w 4 -b 0.0.0.0:5000 backend.app:app
       "
     env_file:
       - .env
@@ -39,8 +39,8 @@ services:
       - "192.168.1.10:172.18.0.2"
       - "192.168.1.11:172.18.0.2"
     environment:
-     SNMP_TARGET: snmpsim
-     MYSQL_DB: ${MYSQL_DB}
+      SNMP_TARGET: snmpsim
+      MYSQL_DB: ${MYSQL_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -54,19 +54,18 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    #restart: on-failure
     networks:
-      - unisys-net   
+      - unisys-net
 
-
+  
   snmpsim:
     build:
       context: .
       dockerfile: Dockerfile.snmpsim
-    image: tandrup/snmpsim
+    image: unisys/local-snmpsim:dev   # local image tag, avoids remote registry
     user: root
     volumes:
-     - ./snmp-sim/data:/usr/local/snmpsim/data
+      - ./snmp-sim/data:/usr/local/snmpsim/data
     ports:
       - "1161:1161/udp"
     command:
@@ -77,7 +76,7 @@ services:
       - --process-user=nobody
       - --process-group=nogroup
     healthcheck:
-      test: ["CMD-SHELL", "snmpwalk -v2c -c public 127.0.0.1:1161 .1.3.6.1.2.1.1.1.0"]
+      test: ["CMD-SHELL", "snmpwalk -v2c -c public 127.0.0.1:1161 1.3.6.1.2.1.1.1.0 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -88,26 +87,41 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile     # <-- now matches the file on disk
+      dockerfile: Dockerfile
       args:
         VITE_API_BASE: "/api"
     ports:
       - "3000:80"
     env_file:
-      - frontend/.env             # pick up VITE_API_BASE=""
+      - frontend/.env
     depends_on:
       - backend
     networks:
       - unisys-net
 
+  poller:
+    build: .
+    command: python -u -m backend.poller
+    env_file:
+      - .env
+    environment:
+      SNMP_TARGET: snmpsim
+    extra_hosts:
+      - "192.168.1.10:172.18.0.2"
+      - "192.168.1.11:172.18.0.2"
+    depends_on:
+      db:
+        condition: service_healthy
+      snmpsim:
+        condition: service_healthy
+    working_dir: /app
+    networks:
+      - unisys-net
+
 networks:
   unisys-net:
-    driver: bridge  
+    driver: bridge
 
-
-
-
-# Top-level volumes section:
 volumes:
-  db_data:      # persists MySQL data
-  logs-data:    # ← your new named volume for /app/logs
+  db_data:
+  logs-data:
