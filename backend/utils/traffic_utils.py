@@ -12,3 +12,5 @@ def compute_kbps_delta(new_octets: int, old_octets: int, delta_s: float, counter
         delta += counter_max
     # bits → kilobits/sec
     return round((delta * 8) / (delta_s * 1000), 2)
+
+

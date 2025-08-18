@@ -1,7 +1,6 @@
--- db/init.sql
-
-CREATE DATABASE IF NOT EXISTS unios CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE unios;
+-- db/init.sql (corrected: create `unisys` DB and align schema)
+CREATE DATABASE IF NOT EXISTS unisys CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE unisys;
 
 -- Table: devices
 CREATE TABLE IF NOT EXISTS devices (
@@ -28,7 +27,7 @@ CREATE TABLE IF NOT EXISTS device_interfaces (
     ON DELETE CASCADE
 );
 
-INSERT INTO device_interfaces (device_id, interface_index, name)
+INSERT IGNORE INTO device_interfaces (device_id, interface_index, name)
 VALUES
   (1, 1, 'eth0'),
   (1, 2, 'eth1'),
@@ -40,25 +39,26 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
   device_ip     VARCHAR(45)     NOT NULL,
   timestamp     DATETIME        NOT NULL,
-  cpu_pct       DECIMAL(5,2)    NOT NULL,
-  memory_pct    DECIMAL(5,2)    NOT NULL,
-  uptime_secs   BIGINT          NOT NULL,
+  cpu_pct       DOUBLE          NOT NULL DEFAULT 0,
+  memory_pct    DOUBLE          NOT NULL DEFAULT 0,
+  uptime_seconds DOUBLE         DEFAULT NULL,
   INDEX (device_ip),
   INDEX (timestamp)
 );
 
 -- Table: traffic_metrics
 CREATE TABLE IF NOT EXISTS traffic_metrics (
+  id                BIGINT AUTO_INCREMENT PRIMARY KEY,
   device_ip        VARCHAR(45)   NOT NULL,
   interface_index  INT           NOT NULL,
   iface_name       VARCHAR(128)  NOT NULL DEFAULT '',
-  inbound_kbps     DOUBLE        NOT NULL,
-  outbound_kbps    DOUBLE        NOT NULL,
-  in_errors        INT           NOT NULL DEFAULT 0,
-  out_errors       INT           NOT NULL DEFAULT 0,
-  errors           INT           NOT NULL DEFAULT 0,
-  timestamp        DATETIME(6)   NOT NULL,
-  PRIMARY KEY(device_ip, interface_index, timestamp)
+  inbound_kbps     DOUBLE        NOT NULL DEFAULT 0,
+  outbound_kbps    DOUBLE        NOT NULL DEFAULT 0,
+  in_errors        BIGINT        NOT NULL DEFAULT 0,
+  out_errors       BIGINT        NOT NULL DEFAULT 0,
+  errors           BIGINT        NOT NULL DEFAULT 0,
+  timestamp        DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  INDEX idx_device_if_time (device_ip, interface_index, timestamp)
 );
 
 -- Table: access_sessions
@@ -89,8 +89,8 @@ CREATE TABLE IF NOT EXISTS traffic_counters_last (
   iface_name       VARCHAR(128)  NOT NULL DEFAULT '',
   last_in_octets   BIGINT        NOT NULL DEFAULT 0,
   last_out_octets  BIGINT        NOT NULL DEFAULT 0,
-  last_in_errors   INT           NOT NULL DEFAULT 0,
-  last_out_errors  INT           NOT NULL DEFAULT 0,
+  last_in_errors   BIGINT        NOT NULL DEFAULT 0,
+  last_out_errors  BIGINT        NOT NULL DEFAULT 0,
   last_seen        DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY(device_ip, interface_index)
 );

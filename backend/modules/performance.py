@@ -1,5 +1,4 @@
 # backend/modules/performance.py
-
 from datetime import datetime
 from backend.utils.snmp_client import snmp_get_bulk, snmp_get
 from backend.utils.db import get_db_connection
@@ -20,93 +19,38 @@ def safe_float(value, default=None):
     """Convert to float safely, handling NaN and invalid values."""
     try:
         f = float(value)
-        return f if not (f != f) else default  # NaN check
+        # avoid NaN
+        if f != f:
+            return default
+        return f
     except Exception:
         return default
 
-def poll_device(ip: str, community: str = "public", port: int = 1161) -> dict:
-    """Poll a single device via SNMP and return metrics."""
-    try:
-        cpu_idle = safe_float(snmp_get(ip, community, CPU_IDLE_OID, port=port))
-        cpu_user = safe_float(snmp_get(ip, community, CPU_USER_OID, port=port))
-        total_mem = safe_float(snmp_get(ip, community, MEM_TOTAL_OID, port=port))
-        avail_mem = safe_float(snmp_get(ip, community, MEM_AVAILABLE_OID, port=port))
-        uptime_ticks = safe_float(snmp_get(ip, community, UPTIME_TICKS_OID, port=port))
-
-        mem_pct = (
-            round(((total_mem - avail_mem) / total_mem) * 100, 2)
-            if total_mem and avail_mem is not None else None
-        )
-
-        cpu_pct = (
-            cpu_user if cpu_user is not None
-            else (100 - cpu_idle if cpu_idle is not None else None)
-        )
-
-        uptime_secs = float(uptime_ticks / 100) if uptime_ticks is not None else None
-
-        return {
-            "device_ip": ip,
-            "cpu_pct": cpu_pct,
-            "memory_pct": mem_pct,
-            "uptime_secs": uptime_secs,
-            "timestamp": datetime.utcnow()
-        }
-    except Exception:
-        logger.error(f"Error polling device {ip}:\n{traceback.format_exc()}")
-        return {
-            "device_ip": ip,
-            "cpu_pct": None,
-            "memory_pct": None,
-            "uptime_secs": None,
-            "timestamp": datetime.utcnow()
-        }
-
-import os
-
-# ...
-# Insert this inside backend/modules/performance.py (replace the existing get_performance_metrics)
-
 def _find_key_and_val(vals: dict, oid: str):
     """
-    Try to find the best matching key/value in vals for requested numeric OID.
+    Robust lookup: exact match, longest suffix match, then last token fallback.
     Returns (key, val) or (None, None) if not found.
-    Strategy:
-      1) exact match (vals[oid])
-      2) match by longest suffix (try the full tail of the requested OID)
-      3) fallback: try if any key equals the textual last token (e.g. 'sysUpTime.0')
     """
     if not vals:
         return None, None
-
-    # exact match
     if oid in vals:
         return oid, vals[oid]
-
     oid_parts = oid.split('.')
-    # try longest suffix match first (so we prefer more specific suffixes)
     for n in range(len(oid_parts), 0, -1):
         suffix = '.'.join(oid_parts[-n:])
         for k, v in vals.items():
             if k.endswith(suffix):
                 return k, v
-
-    # finally, try direct textual last token fallback
     last_token = oid_parts[-1]
     for k, v in vals.items():
         if k.endswith(last_token):
             return k, v
-
     return None, None
-
 
 def get_performance_metrics():
     """
-    Poll devices and persist metrics.
-
-    When SNMP_TARGET is set (single-bulk SNMP simulator), use the device IP
-    as the SNMP community string so SNMP-Sim will select the per-device
-    snmprec controller (e.g. file "192.168.1.10.snmprec" -> community "192.168.1.10").
+    Poll devices, compute metrics, persist to DB and return results.
+    Ensures non-null values for columns declared NOT NULL in schema.
     """
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -115,7 +59,7 @@ def get_performance_metrics():
     devices = cursor.fetchall()
 
     results = []
-    bulk_target = os.getenv("SNMP_TARGET", None)  # prefer single-bulk target in dev
+    bulk_target = os.getenv("SNMP_TARGET", None)
     snmp_port = int(os.getenv("SNMP_PORT", 1161))
 
     for d in devices:
@@ -126,8 +70,6 @@ def get_performance_metrics():
         total_mem = avail_mem = None
         cpu_idle_raw = cpu_user_raw = total_mem_raw = avail_mem_raw = uptime_ticks_raw = None
 
-        # When using a single SNMP-Sim container as bulk target, use the device IP
-        # as the community string so the simulator picks the right controller file.
         bulk_host = bulk_target or ip
         community = (ip if bulk_target else "public")
 
@@ -140,11 +82,8 @@ def get_performance_metrics():
                 timeout=2,
                 retries=2
             )
-
-
             logger.debug("snmp_get_bulk returned keys: %s", list(vals.keys()))
 
-            # robust key lookup (handles different key formats)
             _, cpu_idle_raw = _find_key_and_val(vals, CPU_IDLE_OID)
             _, cpu_user_raw = _find_key_and_val(vals, CPU_USER_OID)
             _, total_mem_raw = _find_key_and_val(vals, MEM_TOTAL_OID)
@@ -164,8 +103,6 @@ def get_performance_metrics():
 
         except Exception as bulk_err:
             logger.warning("SNMP bulk error for %s (host=%s community=%s): %s", ip, bulk_host, community, bulk_err)
-
-            # Fallback to per-OID gets against the real device IP (use community=device-ip when bulk_target set)
             try:
                 cpu_idle = safe_float(snmp_get(ip, community, CPU_IDLE_OID, port=snmp_port))
             except Exception:
@@ -187,12 +124,8 @@ def get_performance_metrics():
             except Exception:
                 uptime_secs = None
 
-        cpu_pct = (
-            cpu_user if cpu_user is not None
-            else (100 - cpu_idle if cpu_idle is not None else None)
-        )
+        cpu_pct = (cpu_user if cpu_user is not None else (100 - cpu_idle if cpu_idle is not None else None))
 
-        # DEBUG: log raw values just before DB insert
         logger.debug(
             "INSERT DEBUG for %s (community=%s): raw(cpu_user_raw=%r, cpu_idle_raw=%r, total_mem_raw=%r, avail_mem_raw=%r, uptime_ticks_raw=%r) -> computed(uptime_secs=%r, cpu_pct=%r, mem_pct=%r)",
             ip, community,
@@ -200,31 +133,34 @@ def get_performance_metrics():
             uptime_secs, cpu_pct, mem_pct
         )
 
-        # Persist to DB
+        # Ensure we do not insert explicit NULL into NOT NULL DB columns
+        cpu_val = safe_float(cpu_pct, 0.0)
+        mem_val = safe_float(mem_pct, 0.0)
+        uptime_val = float(uptime_secs) if uptime_secs is not None else None
+
         try:
             cursor.execute(
                 "INSERT INTO performance_metrics "
-                "(device_ip, timestamp, cpu_pct, memory_pct, uptime_secs) "
+                "(device_ip, timestamp, cpu_pct, memory_pct, uptime_seconds) "
                 "VALUES (%s,%s,%s,%s,%s)",
                 (
                     ip,
                     ts.replace("T", " ").rstrip("Z"),
-                    safe_float(cpu_pct, None),
-                    safe_float(mem_pct, None),
-                    (float(uptime_secs) if uptime_secs is not None else None)
+                    cpu_val,
+                    mem_val,
+                    uptime_val
                 )
             )
         except Exception as e:
             logger.error("Failed to insert performance_metrics for %s at %s: %s", ip, ts, e)
 
-        logger.debug("Device %s -> cpu=%s memory=%s uptime=%s", ip, cpu_pct, mem_pct, uptime_secs)
+        logger.debug("Device %s -> cpu=%s memory=%s uptime=%s", ip, cpu_val, mem_val, uptime_val)
 
-        # Return rows using the keys poller expects
         results.append({
             "device_ip": ip,
-            "cpu_pct": cpu_pct,
-            "memory_pct": mem_pct,
-            "uptime_secs": uptime_secs,
+            "cpu_pct": cpu_val,
+            "memory_pct": mem_val,
+            "uptime_secs": uptime_val,
             "last_updated": ts
         })
 
