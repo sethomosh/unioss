@@ -1,240 +1,79 @@
-# backend/modules/traffic.py
-from datetime import datetime
-import os
-from backend.utils.snmp_client import snmp_get, snmp_walk
-from backend.utils.db import get_db_connection
-from backend.utils.traffic_utils import compute_kbps_delta
+#!/usr/bin/env python3
+import time
 import logging
+from backend.utils.snmp_client import snmp_get_bulk
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("traffic")
 
-# environment / default snmpsim port (we will pass device ip per-query)
-SNMP_PORT      = int(os.getenv("SNMP_PORT", 1161))
-SNMP_COMMUNITY = os.getenv("SNMP_COMMUNITY", "public")
+# SNMP OIDs for traffic
+IF_DESCR_OID = "1.3.6.1.2.1.2.2.1.2"
+IF_IN_OCTETS_OID = "1.3.6.1.2.1.2.2.1.10"
+IF_OUT_OCTETS_OID = "1.3.6.1.2.1.2.2.1.16"
+IF_IN_ERRORS_OID = "1.3.6.1.2.1.2.2.1.14"
+IF_OUT_ERRORS_OID = "1.3.6.1.2.1.2.2.1.20"
 
-# base OIDs for ifInOctets / ifOutOctets
-OID_IN   = "1.3.6.1.2.1.2.2.1.10"
-OID_OUT  = "1.3.6.1.2.1.2.2.1.16"
-OID_IF_DESCR   = "1.3.6.1.2.1.2.2.1.2"
-OID_IF_IN_ERR  = "1.3.6.1.2.1.2.2.1.14"
-OID_IF_OUT_ERR = "1.3.6.1.2.1.2.2.1.20"
+# cache for last counters
+_last_counters = {}
 
-MAX_32 = 2**32
-MAX_64 = 2**64
 
-def _safe_int(s, default=0):
+def get_traffic_metrics(device_ip, community="public", version="2c", port=161):
     """
-    coerce strings like '12345', 'Counter32: 12345', 'Timeticks: (12345)' to int
-    return default if unable.
+    Poll SNMP device for traffic metrics. 
+    Returns a list of dicts, one per interface.
+    Includes: inbound_kbps, outbound_kbps, in_errors, out_errors.
     """
-    if s is None:
-        return default
+
     try:
-        return int(s)
-    except Exception:
-        # extract first long run of digits
-        import re
-        m = re.search(r'(\d+)', str(s))
-        if m:
-            try:
-                return int(m.group(1))
-            except Exception:
-                return default
-        return default
+        # fetch values from device
+        if_descr = snmp_get_bulk(device_ip, community, version, port, IF_DESCR_OID)
+        if_in_octets = snmp_get_bulk(device_ip, community, version, port, IF_IN_OCTETS_OID)
+        if_out_octets = snmp_get_bulk(device_ip, community, version, port, IF_OUT_OCTETS_OID)
+        if_in_errors = snmp_get_bulk(device_ip, community, version, port, IF_IN_ERRORS_OID)
+        if_out_errors = snmp_get_bulk(device_ip, community, version, port, IF_OUT_ERRORS_OID)
 
-def _wrap_aware_delta(prev, new):
-    """
-    return (delta, is_64) -> detect whether wrap occurred using thresholds,
-    choose 32 or 64-bit based on magnitude heuristics.
-    """
-    # quick heuristics: if values > 2**32 assume 64-bit counters
-    if new >= MAX_32 or prev >= MAX_32:
-        maxv = MAX_64
-        is64 = True
-    else:
-        maxv = MAX_32
-        is64 = False
+        now = time.time()
+        rows = []
 
-    if new >= prev:
-        delta = new - prev
-    else:
-        # wrapped or reset
-        delta = (new + maxv) - prev
-    return delta, is64
+        for if_index, name in if_descr.items():
+            in_octets = int(if_in_octets.get(if_index, 0))
+            out_octets = int(if_out_octets.get(if_index, 0))
+            in_errs = int(if_in_errors.get(if_index, 0))
+            out_errs = int(if_out_errors.get(if_index, 0))
 
-def get_traffic_stats():
-    conn = get_db_connection()
-    cur = conn.cursor(dictionary=True)
+            # key for counter tracking
+            key = f"{device_ip}:{if_index}"
+            prev = _last_counters.get(key)
 
-    cur.execute("""
-        SELECT device_ip, interface_index,
-               last_in_octets, last_out_octets,
-               last_in_errors, last_out_errors,
-               last_seen
-        FROM traffic_counters_last
-    """)
-    last_seen_map = {
-        (r["device_ip"], r["interface_index"]): r
-        for r in cur.fetchall()
-    }
+            inbound_kbps = outbound_kbps = 0
+            if prev:
+                delta_t = now - prev["timestamp"]
+                if delta_t > 0:
+                    in_delta = (in_octets - prev["in_octets"]) % (2**32)
+                    out_delta = (out_octets - prev["out_octets"]) % (2**32)
+                    # bits per second → kilobits per second
+                    inbound_kbps = (in_delta * 8) / (delta_t * 1000)
+                    outbound_kbps = (out_delta * 8) / (delta_t * 1000)
 
-    snapshot = []
+            # update cache
+            _last_counters[key] = {
+                "timestamp": now,
+                "in_octets": in_octets,
+                "out_octets": out_octets,
+            }
 
-    # iterate devices
-    cur.execute("SELECT ip FROM devices")
-    for (ip,) in cur.fetchall():
-        logger.info(f"→ processing device {ip!r}")
-
-        # fetch interface count from the device ip (pass ip to snmp)
-        try:
-            num_ifs_raw = snmp_get(ip, SNMP_COMMUNITY,
-                                   "1.3.6.1.2.1.2.1.0",
-                                   port=SNMP_PORT)
-            num_ifs = _safe_int(num_ifs_raw, default=0)
-        except Exception as e:
-            logger.error(f"failed to fetch ifNumber for {ip}: {e}")
-            continue
-
-        descr_map = {}
-        try:
-            for oid_str, val in snmp_walk(ip, SNMP_COMMUNITY,
-                                          OID_IF_DESCR,
-                                          port=SNMP_PORT):
-                try:
-                    idx = int(oid_str.rsplit(".", 1)[1])
-                except Exception:
-                    continue
-                descr_map[idx] = val or ""
-        except Exception as e:
-            logger.warning(f"could not walk ifDescr for {ip}: {e}")
-
-        in_map, out_map = {}, {}
-        in_err_map, out_err_map = {}, {}
-
-        for idx in range(1, num_ifs + 1):
-            try:
-                in_raw_s = snmp_get(ip, SNMP_COMMUNITY, f"{OID_IN}.{idx}", port=SNMP_PORT)
-                out_raw_s = snmp_get(ip, SNMP_COMMUNITY, f"{OID_OUT}.{idx}", port=SNMP_PORT)
-                in_err_s = snmp_get(ip, SNMP_COMMUNITY, f"{OID_IF_IN_ERR}.{idx}", port=SNMP_PORT)
-                out_err_s = snmp_get(ip, SNMP_COMMUNITY, f"{OID_IF_OUT_ERR}.{idx}", port=SNMP_PORT)
-
-                in_map[idx]      = _safe_int(in_raw_s, default=0)
-                out_map[idx]     = _safe_int(out_raw_s, default=0)
-                in_err_map[idx]  = _safe_int(in_err_s, default=0)
-                out_err_map[idx] = _safe_int(out_err_s, default=0)
-            except Exception as e:
-                logger.warning(f"snmp get failed idx={idx} on {ip}: {e}")
-
-        if not in_map:
-            logger.warning(f"no counters for {ip!r}, skipping")
-            continue
-
-        for idx, in_raw in in_map.items():
-            now = datetime.utcnow()
-            out_raw    = out_map.get(idx, 0)
-            in_err_raw = in_err_map.get(idx, 0)
-            out_err_raw= out_err_map.get(idx, 0)
-            key        = (ip, idx)
-            last       = last_seen_map.get(key)
-
-            if last:
-                delta_s = (now - last["last_seen"]).total_seconds() or 1
-                prev_in = _safe_int(last.get("last_in_octets", 0), default=0)
-                prev_out = _safe_int(last.get("last_out_octets", 0), default=0)
-
-                in_delta, in_is64 = _wrap_aware_delta(prev_in, in_raw)
-                out_delta, out_is64 = _wrap_aware_delta(prev_out, out_raw)
-
-                inbound_kbps = (in_delta * 8) / (delta_s * 1000.0)
-                outbound_kbps = (out_delta * 8) / (delta_s * 1000.0)
-
-                # errors
-                in_err_delta = in_err_raw - _safe_int(last.get("last_in_errors", 0))
-                out_err_delta = out_err_raw - _safe_int(last.get("last_out_errors", 0))
-                # fallback wrap for errors
-                if in_err_delta < 0:
-                    in_err_delta += MAX_32
-                if out_err_delta < 0:
-                    out_err_delta += MAX_32
-
-                in_errors = in_err_delta
-                out_errors = out_err_delta
-                errors = in_errors + out_errors
-            else:
-                inbound_kbps = outbound_kbps = 0.0
-                in_errors = out_errors = errors = 0
-
-            name = descr_map.get(idx, "")
-
-            # upsert raw counters
-            cur.execute("""
-                INSERT INTO traffic_counters_last
-                  (device_ip, interface_index, iface_name,
-                   last_in_octets, last_out_octets,
-                   last_in_errors, last_out_errors,
-                   last_seen)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                ON DUPLICATE KEY UPDATE
-                  iface_name      = VALUES(iface_name),
-                  last_in_octets  = VALUES(last_in_octets),
-                  last_out_octets = VALUES(last_out_octets),
-                  last_in_errors  = VALUES(last_in_errors),
-                  last_out_errors = VALUES(last_out_errors),
-                  last_seen       = VALUES(last_seen)
-            """, (
-                ip, idx, name,
-                in_raw, out_raw,
-                in_err_raw, out_err_raw,
-                now
-            ))
-
-            try:
-                cur.execute("""
-                    INSERT INTO traffic_metrics
-                    (device_ip, interface_index, iface_name,
-                    inbound_kbps, outbound_kbps,
-                    in_errors, out_errors, errors,
-                    timestamp)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, (
-                    ip, idx, name,
-                    inbound_kbps, outbound_kbps,
-                    in_errors, out_errors, errors,
-                    now
-                ))
-            except Exception as e:
-                logger.warning(f"failed to insert traffic_metrics for {ip} idx={idx} at {now.isoformat()}Z: {e}")
-                conn.rollback()
-
-            logger.info(
-                f"[SNAPSHOT] {ip} idx={idx} "
-                f"in={inbound_kbps}kbps out={outbound_kbps}kbps "
-                f"errors={errors}"
-            )
-
-            snapshot.append({
-                "device_ip":       ip,
-                "interface_index": idx,
-                "iface_name":      name,
-                "inbound_kbps":    inbound_kbps,
-                "outbound_kbps":   outbound_kbps,
-                "in_errors":       in_errors,
-                "out_errors":      out_errors,
-                "errors":          errors,
-                "timestamp":       now.isoformat() + "Z"
+            rows.append({
+                "device_ip": device_ip,
+                "if_index": if_index,
+                "if_descr": name,
+                "inbound_kbps": round(inbound_kbps, 2),
+                "outbound_kbps": round(outbound_kbps, 2),
+                "in_errors": in_errs,
+                "out_errors": out_errs,
+                "last_updated": now,
             })
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        return rows
 
-    logger.info(f"snapshot {len(snapshot)} entries at {datetime.utcnow().isoformat()}Z")
-    return snapshot
-
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
-    get_traffic_stats()
+    except Exception as e:
+        logger.exception("Traffic poll failed for %s", device_ip)
+        return []

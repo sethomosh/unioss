@@ -1,0 +1,8 @@
+[run]
+branch = True
+omit =
+    tests/*
+    .venv/*
+
+[report]
+show_missing = True

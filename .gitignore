@@ -16,17 +16,24 @@ __pycache__/
 
 # Docker and env files
 *.pid
-*.env            # don’t check in secrets
+.env
+.env.local
+.DS_Store
 
 # IDE configs
 .vscode/
 .idea/
-.DS_Store
 
 # Node artifacts (if any)
 node_modules/
 dist/
 npm-debug.log*
-.env
-.env
+
+# backups and temp
 backups/
+*.bak
+main.py.bak
+
+# coverage & html
+htmlcov/
+coverage.xml

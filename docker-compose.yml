@@ -1,4 +1,4 @@
-version: "2.4"
+#version: "2.4"
 
 services:
   db:
@@ -35,9 +35,6 @@ services:
       "
     env_file:
       - .env
-    extra_hosts:
-      - "192.168.1.10:172.18.0.2"
-      - "192.168.1.11:172.18.0.2"
     environment:
       SNMP_TARGET: snmpsim
       MYSQL_DB: ${MYSQL_DB}
@@ -57,7 +54,6 @@ services:
     networks:
       - unisys-net
 
-  
   snmpsim:
     build:
       context: .
@@ -106,15 +102,13 @@ services:
       - .env
     environment:
       SNMP_TARGET: snmpsim
-    extra_hosts:
-      - "192.168.1.10:172.18.0.2"
-      - "192.168.1.11:172.18.0.2"
     depends_on:
       db:
         condition: service_healthy
       snmpsim:
         condition: service_healthy
     working_dir: /app
+    restart: unless-stopped
     networks:
       - unisys-net
 

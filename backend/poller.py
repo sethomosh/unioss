@@ -1,36 +1,59 @@
 #!/usr/bin/env python3
-import time
-import os
 import logging
+from backend.utils.db import get_db_connection
+from backend.modules.traffic import get_traffic_metrics
 from backend.modules.performance import get_performance_metrics
 
-logging.basicConfig(level=logging.DEBUG)  # switched to DEBUG for more details
-logger = logging.getLogger("poller")
+logger = logging.getLogger("unisys_poller")
 
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))  # seconds
+def poll_all_devices():
+    """
+    Poll all devices marked 'up' in DB, store traffic (kbps) and performance metrics.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT ip, snmp_community FROM devices WHERE status='up'")
+    devices = cursor.fetchall()
 
-def run():
-    logger.info("Starting poller; interval=%ss", POLL_INTERVAL)
-    while True:
+    for device in devices:
+        ip = device["ip"]
+        community = device.get("snmp_community", "public")
         try:
-            rows = get_performance_metrics()
-            logger.info("Polled %d devices", len(rows))
-
-            # Detailed debug output for each device row (use keys returned by get_performance_metrics)
-            for row in rows:
-                logger.debug(
-                    "INSERT DEBUG - IP: %s, CPU: %s, MEM: %s, UPTIME: %s, LAST_UPDATED: %s",
-                    row.get("device_ip"),
-                    row.get("cpu_pct"),
-                    row.get("memory_pct"),
-                    row.get("uptime_secs"),
-                    row.get("last_updated"),
+            # traffic
+            traffic_rows = get_traffic_metrics(ip, community)
+            cur2 = conn.cursor()
+            for row in traffic_rows:
+                cur2.execute(
+                    """
+                    INSERT INTO traffic_metrics
+                    (device_ip, if_index, iface_name, inbound_kbps, outbound_kbps, in_errors, out_errors, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, FROM_UNIXTIME(%s))
+                    """,
+                    (
+                        row["device_ip"],
+                        row["if_index"],
+                        row["if_descr"],
+                        row.get("in_bps", 0),
+                        row.get("out_bps", 0),
+                        row.get("in_errors", 0),
+                        row.get("out_errors", 0),
+                        row["last_updated"],
+                    ),
                 )
+            cur2.close()
 
-        except Exception:
-            logger.exception("Poller error")
+            # performance
+            perf_row = get_performance_metrics(ip)
+            # get_performance_metrics already inserts into DB
 
-        time.sleep(POLL_INTERVAL)
+            logger.info(f"Polled {ip}: {len(traffic_rows)} interfaces, performance recorded")
+        except Exception as e:
+            logger.error(f"Failed polling {ip}: {e}")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 
 if __name__ == "__main__":
-    run()
+    poll_all_devices()

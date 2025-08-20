@@ -23,7 +23,7 @@ def fetch_latest_performance():
             SELECT pm.device_ip AS ip,
                    pm.cpu_pct   AS cpu,
                    pm.memory_pct AS memory,
-                   pm.uptime_secs AS uptime,
+                   pm.uptime_seconds AS uptime,
                    pm.timestamp AS last_updated_raw
             FROM performance_metrics pm
             JOIN (
@@ -98,7 +98,7 @@ def performance_history():
               DATE_FORMAT(timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
               cpu_pct     AS cpu_pct,
               memory_pct  AS memory_pct,
-              uptime_secs AS uptime_secs
+              uptime_seconds AS uptime_secs
             FROM performance_metrics
             ORDER BY timestamp ASC
         """)

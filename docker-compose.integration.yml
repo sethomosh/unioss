@@ -1,0 +1,9 @@
+services:
+  snmpsim:
+    image: unisys/local-snmpsim:dev
+    ports:
+      - "1161:1161/udp"
+    volumes:
+      - ./snmp-sim/data:/usr/local/snmpsim/data:ro
+
+  # use default db and poller from main compose; override mappings if needed
