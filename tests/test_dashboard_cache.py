@@ -1,3 +1,4 @@
+# tests/test_dashboard_cache.py
 import json
 import time
 
@@ -22,3 +23,4 @@ def test_devices_dashboard_uses_cache(client):
     except Exception:
         # redis not available in some local dev setups - that's okay
         pass
+

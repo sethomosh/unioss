@@ -24,3 +24,7 @@ requests
 
 
 # (add any other deps below…)
+fastapi>=0.95
+uvicorn[standard]>=0.22
+httpx>=0.25
+pytest-asyncio>=0.21

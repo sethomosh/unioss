@@ -43,3 +43,6 @@ def test_list_sessions():
     second = sessions[1]
     assert second["user"] == "bob"
     assert second["duration"] == 1800
+
+
+

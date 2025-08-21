@@ -28,14 +28,17 @@ services:
     build: .
     ports:
       - "5000:5000"
-    entrypoint: >
-      sh -c "
-         /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
-         exec gunicorn -w 4 -b 0.0.0.0:5000 backend.app:app
-      "
     env_file:
       - .env
     environment:
+      # map old MYSQL_* values into the UNISYS_* env names used by app/main.py
+      UNISYS_DB_HOST: db
+      UNISYS_DB_USER: ${MYSQL_USER}
+      UNISYS_DB_PASS: ${MYSQL_PASSWORD}
+      UNISYS_DB_NAME: ${MYSQL_DB}
+      UNISYS_DB_PORT: ${MYSQL_TCP_PORT:-3306}
+      UNISYS_REDIS_HOST: redis
+      UNISYS_REDIS_PORT: 6379
       SNMP_TARGET: snmpsim
       MYSQL_DB: ${MYSQL_DB}
     depends_on:
@@ -45,6 +48,12 @@ services:
         condition: service_healthy
     volumes:
       - logs-data:/app/logs:rw
+      - ./backend:/app/backend:ro
+    command: >
+      sh -c "
+        /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 5000 --workers 4
+      "
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
       interval: 30s
@@ -53,6 +62,7 @@ services:
       start_period: 30s
     networks:
       - unisys-net
+
 
   snmpsim:
     build:
