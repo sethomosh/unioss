@@ -1,71 +1,218 @@
 // src/App.tsx
-import { useState } from 'react'
-import { NavLink, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { Sidebar } from './components/Sidebar';
+import { Topbar } from './components/Topbar';
+import Dashboard from './pages/Dashboard';
+import { Performance } from './pages/Performance';
+import { PerformanceHistory } from './pages/PerformanceHistory';
+import { Traffic } from './pages/Traffic';
+import { Discovery } from './pages/Discovery';
+import { Access } from './pages/Access';
+import { DeviceDetail } from './pages/DeviceDetail';
+import { AnalyticsCalendar } from './pages/AnalyticsCalendar';
+import { Login } from './pages/Login';
+import { Alerts } from './pages/Alerts';
+import { SNMPTools } from './pages/SNMPTools';
+import { Settings } from './pages/Settings';
+import './styles/theme.css';
 
-import HealthPage           from './pages/HealthPage'
-import DiscoveryPage        from './pages/DiscoveryPage'
-import DeviceDetailPage     from './pages/DeviceDetailPage' // ← import it
-import PerformancePage      from './pages/PerformancePage'
-import TrafficPage          from './pages/TrafficPage'
-import AccessPage           from './pages/AccessPage'
-import SnmpPage             from './pages/SnmpPage'
-import PerformanceChartPage from './pages/PerformanceChartPage'
-import TrafficChartPage     from './pages/TrafficChartPage'
+// Protected route component
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
 
-import './App.css'
-
-export default function App() {
-  const [count, setCount] = useState(0)
+  if (!user) {
+    return <Login />;
+  }
 
   return (
-    <div className="App">
-      <nav>
-        <NavLink to="/"       end>Home</NavLink> |{' '}
-        <NavLink to="/discovery">Discovery</NavLink> |{' '}
-        <NavLink to="/performance">Performance</NavLink> |{' '}
-        <NavLink to="/traffic">Traffic</NavLink> |{' '}
-        <NavLink to="/access">Access</NavLink> |{' '}
-        <NavLink to="/snmp">SNMP GET</NavLink>
-        {' '}| <NavLink to="/performance-charts">Perf Charts</NavLink> |{' '}
-        <NavLink to="/traffic-charts">Traffic Charts</NavLink>
-      </nav>
-
-      <main>
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <>
-                <h1>Welcome</h1>
-                <button onClick={() => setCount(c => c + 1)}>
-                  clicked {count} times
-                </button>
-                <p>
-                  Health: <HealthPage />
-                </p>
-              </>
-            }
-          />
-
-          <Route path="/discovery"      element={<DiscoveryPage />} />
-          <Route path="/performance"    element={<PerformancePage />} />
-          <Route path="/traffic"        element={<TrafficPage />} />
-          <Route path="/access"         element={<AccessPage />} />
-          <Route path="/snmp"           element={<SnmpPage />} />
-          {/* New chart routes: */}
-          <Route path="/performance-charts" element={<PerformanceChartPage />} />
-          <Route path="/traffic-charts"     element={<TrafficChartPage />} />
-
-
-          {/* Drill‐down detail for a single device */}
-          <Route path="/devices/:ip" element={<DeviceDetailPage />} />
-
-
-
-          {/* optional: catch‐all 404 route */}
-          <Route path="*" element={<h2>Page Not Found</h2>} />
-        </Routes>
-      </main>
-    </div>
-  )
+    <>
+      <Sidebar />
+      <div className="flex-1 flex flex-col">
+        {children}
+      </div>
+    </>
+  );
 }
+
+function TitleBarWrapper() {
+  const location = useLocation();
+  const title =
+    location.pathname === '/'
+      ? 'Dashboard'
+      : location.pathname.startsWith('/devices')
+      ? 'Device'
+      : location.pathname.startsWith('/tools')
+      ? 'Tools'
+      : location.pathname
+          .replace('/', '')
+          .split('-')
+          .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(' ') || 'Dashboard';
+
+  return <Topbar title={title} />;
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <Router>
+        <ErrorBoundary>
+          <div className="min-h-screen bg-background text-foreground">
+            <div className="flex min-h-screen">
+              <Routes>
+                <Route path="/login" element={<Login />} />
+
+                <Route
+                  path="/"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Dashboard />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/devices"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Discovery />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/devices/:ip"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <DeviceDetail />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/performance"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Performance />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/performance-history"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <PerformanceHistory />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/traffic"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Traffic />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/access"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Access />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/alerts"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Alerts />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/analytics"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <AnalyticsCalendar />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/tools/snmp"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <SNMPTools />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/settings"
+                  element={
+                    <ProtectedRoute>
+                      <TitleBarWrapper />
+                      <main className="flex-1 p-4 md:p-6">
+                        <Settings />
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="*"
+                  element={
+                    <ProtectedRoute>
+                      <main className="flex-1 p-4 md:p-6">
+                        <div className="p-6">404 - Page Not Found</div>
+                      </main>
+                    </ProtectedRoute>
+                  }
+                />
+              </Routes>
+            </div>
+          </div>
+        </ErrorBoundary>
+      </Router>
+    </AuthProvider>
+  );
+}
+
+export default App;

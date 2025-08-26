@@ -1,0 +1,371 @@
+{
+  "health": {
+    "status": "healthy",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "version": "1.2.3",
+    "uptime": 86400
+  },
+  "devices": [
+    {
+      "device_ip": "192.168.1.1",
+      "hostname": "core-switch-01",
+      "vendor": "Cisco",
+      "os": "IOS-XE",
+      "status": "up",
+      "last_seen": "2024-01-15T10:29:45Z",
+      "interfaces": [
+        {
+          "interface_name": "GigabitEthernet1/0/1",
+          "description": "Uplink to Internet",
+          "status": "up",
+          "speed": 1000,
+          "duplex": "full"
+        },
+        {
+          "interface_name": "GigabitEthernet1/0/2",
+          "description": "Server Farm",
+          "status": "up",
+          "speed": 1000,
+          "duplex": "full"
+        }
+      ]
+    },
+    {
+      "device_ip": "192.168.1.2",
+      "hostname": "access-switch-01",
+      "vendor": "Cisco",
+      "os": "IOS",
+      "status": "up",
+      "last_seen": "2024-01-15T10:28:30Z",
+      "interfaces": [
+        {
+          "interface_name": "FastEthernet0/1",
+          "description": "Desktop VLAN",
+          "status": "up",
+          "speed": 100,
+          "duplex": "full"
+        }
+      ]
+    },
+    {
+      "device_ip": "192.168.1.3",
+      "hostname": "router-gw",
+      "vendor": "Juniper",
+      "os": "JunOS",
+      "status": "up",
+      "last_seen": "2024-01-15T10:27:15Z",
+      "interfaces": [
+        {
+          "interface_name": "ge-0/0/0",
+          "description": "WAN Interface",
+          "status": "up",
+          "speed": 1000,
+          "duplex": "full"
+        }
+      ]
+    },
+    {
+      "device_ip": "192.168.1.4",
+      "hostname": "firewall-fw01",
+      "vendor": "Palo Alto",
+      "os": "PAN-OS",
+      "status": "up",
+      "last_seen": "2024-01-15T10:26:00Z",
+      "interfaces": [
+        {
+          "interface_name": "ethernet1/1",
+          "description": "Trust Zone",
+          "status": "up",
+          "speed": 1000,
+          "duplex": "full"
+        }
+      ]
+    },
+    {
+      "device_ip": "192.168.1.5",
+      "hostname": "server-web01",
+      "vendor": "Dell",
+      "os": "Ubuntu 22.04",
+      "status": "up",
+      "last_seen": "2024-01-15T10:25:45Z",
+      "interfaces": [
+        {
+          "interface_name": "eth0",
+          "description": "Primary Network",
+          "status": "up",
+          "speed": 1000,
+          "duplex": "full"
+        }
+      ]
+    },
+    {
+      "device_ip": "192.168.1.6",
+      "hostname": "switch-failed",
+      "vendor": "HP",
+      "os": "ProCurve",
+      "status": "down",
+      "last_seen": "2024-01-15T09:15:30Z",
+      "interfaces": []
+    }
+  ],
+  "performance_metrics": [
+    {
+      "device_ip": "192.168.1.1",
+      "cpu_pct": 45.2,
+      "memory_pct": 67.8,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.2",
+      "cpu_pct": 23.1,
+      "memory_pct": 45.2,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.3",
+      "cpu_pct": 78.9,
+      "memory_pct": 82.1,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.4",
+      "cpu_pct": 34.7,
+      "memory_pct": 58.3,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.5",
+      "cpu_pct": 89.2,
+      "memory_pct": 91.5,
+      "timestamp": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "performance_history": {
+    "device_ip": "192.168.1.1",
+    "data": [
+      {
+        "timestamp": "2024-01-15T10:00:00Z",
+        "cpu_pct": 42.1,
+        "memory_pct": 65.3
+      },
+      {
+        "timestamp": "2024-01-15T10:05:00Z",
+        "cpu_pct": 44.7,
+        "memory_pct": 66.1
+      },
+      {
+        "timestamp": "2024-01-15T10:10:00Z",
+        "cpu_pct": 47.2,
+        "memory_pct": 67.2
+      },
+      {
+        "timestamp": "2024-01-15T10:15:00Z",
+        "cpu_pct": 45.8,
+        "memory_pct": 67.5
+      },
+      {
+        "timestamp": "2024-01-15T10:20:00Z",
+        "cpu_pct": 46.3,
+        "memory_pct": 67.8
+      },
+      {
+        "timestamp": "2024-01-15T10:25:00Z",
+        "cpu_pct": 45.1,
+        "memory_pct": 67.6
+      },
+      {
+        "timestamp": "2024-01-15T10:30:00Z",
+        "cpu_pct": 45.2,
+        "memory_pct": 67.8
+      }
+    ]
+  },
+  "traffic": [
+    {
+      "device_ip": "192.168.1.1",
+      "interface_name": "GigabitEthernet1/0/1",
+      "in_octets": 1250000000,
+      "out_octets": 890000000,
+      "in_packets": 1250000,
+      "out_packets": 890000,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.1",
+      "interface_name": "GigabitEthernet1/0/2",
+      "in_octets": 450000000,
+      "out_octets": 320000000,
+      "in_packets": 450000,
+      "out_packets": 320000,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.2",
+      "interface_name": "FastEthernet0/1",
+      "in_octets": 120000000,
+      "out_octets": 98000000,
+      "in_packets": 120000,
+      "out_packets": 98000,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.3",
+      "interface_name": "ge-0/0/0",
+      "in_octets": 2100000000,
+      "out_octets": 1800000000,
+      "in_packets": 2100000,
+      "out_packets": 1800000,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.4",
+      "interface_name": "ethernet1/1",
+      "in_octets": 890000000,
+      "out_octets": 760000000,
+      "in_packets": 890000,
+      "out_packets": 760000,
+      "timestamp": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_ip": "192.168.1.5",
+      "interface_name": "eth0",
+      "in_octets": 340000000,
+      "out_octets": 280000000,
+      "in_packets": 340000,
+      "out_packets": 280000,
+      "timestamp": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "traffic_history": {
+    "device_ip": "192.168.1.1",
+    "interface_name": "GigabitEthernet1/0/1",
+    "data": [
+      {
+        "timestamp": "2024-01-15T10:00:00Z",
+        "in_octets": 1200000000,
+        "out_octets": 850000000,
+        "in_packets": 1200000,
+        "out_packets": 850000
+      },
+      {
+        "timestamp": "2024-01-15T10:05:00Z",
+        "in_octets": 1220000000,
+        "out_octets": 860000000,
+        "in_packets": 1220000,
+        "out_packets": 860000
+      },
+      {
+        "timestamp": "2024-01-15T10:10:00Z",
+        "in_octets": 1240000000,
+        "out_octets": 875000000,
+        "in_packets": 1240000,
+        "out_packets": 875000
+      },
+      {
+        "timestamp": "2024-01-15T10:15:00Z",
+        "in_octets": 1235000000,
+        "out_octets": 880000000,
+        "in_packets": 1235000,
+        "out_packets": 880000
+      },
+      {
+        "timestamp": "2024-01-15T10:20:00Z",
+        "in_octets": 1245000000,
+        "out_octets": 885000000,
+        "in_packets": 1245000,
+        "out_packets": 885000
+      },
+      {
+        "timestamp": "2024-01-15T10:25:00Z",
+        "in_octets": 1248000000,
+        "out_octets": 888000000,
+        "in_packets": 1248000,
+        "out_packets": 888000
+      },
+      {
+        "timestamp": "2024-01-15T10:30:00Z",
+        "in_octets": 1250000000,
+        "out_octets": 890000000,
+        "in_packets": 1250000,
+        "out_packets": 890000
+      }
+    ]
+  },
+  "sessions": [
+    {
+      "session_id": "sess_001",
+      "device_ip": "192.168.1.1",
+      "username": "admin",
+      "start_time": "2024-01-15T09:45:00Z",
+      "status": "active",
+      "protocol": "ssh"
+    },
+    {
+      "session_id": "sess_002",
+      "device_ip": "192.168.1.3",
+      "username": "operator",
+      "start_time": "2024-01-15T10:15:00Z",
+      "status": "active",
+      "protocol": "ssh"
+    },
+    {
+      "session_id": "sess_003",
+      "device_ip": "192.168.1.4",
+      "username": "admin",
+      "start_time": "2024-01-15T08:30:00Z",
+      "end_time": "2024-01-15T09:45:00Z",
+      "status": "disconnected",
+      "protocol": "https"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "alert_001",
+      "device_ip": "192.168.1.6",
+      "severity": "critical",
+      "message": "Device is unreachable",
+      "timestamp": "2024-01-15T09:15:30Z",
+      "acknowledged": false,
+      "category": "connectivity"
+    },
+    {
+      "id": "alert_002",
+      "device_ip": "192.168.1.5",
+      "severity": "warning",
+      "message": "High CPU utilization (89.2%)",
+      "timestamp": "2024-01-15T10:25:00Z",
+      "acknowledged": false,
+      "category": "performance"
+    },
+    {
+      "id": "alert_003",
+      "device_ip": "192.168.1.3",
+      "severity": "warning",
+      "message": "High memory usage (82.1%)",
+      "timestamp": "2024-01-15T10:20:00Z",
+      "acknowledged": true,
+      "category": "performance"
+    },
+    {
+      "id": "alert_004",
+      "device_ip": "192.168.1.1",
+      "severity": "info",
+      "message": "Interface GigabitEthernet1/0/3 status changed to down",
+      "timestamp": "2024-01-15T10:10:00Z",
+      "acknowledged": false,
+      "category": "interface"
+    }
+  ],
+  "snmp_data": {
+    "192.168.1.1": {
+      "sysdescr": "Cisco IOS Software, C3560 Software (C3560-IPBASEK9-M), Version 15.0(2)SE11, RELEASE SOFTWARE (fc3)",
+      "sysobjectid": "1.3.6.1.4.1.9.1.1741"
+    },
+    "192.168.1.3": {
+      "sysdescr": "Juniper Networks, Inc. mx960 internet router, kernel JUNOS 18.4R3-S2.1",
+      "sysobjectid": "1.3.6.1.4.1.2636.1.1.1.2.1"
+    }
+  }
+}
+
+

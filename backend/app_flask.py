@@ -6,12 +6,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from backend.api.access_api import access_api
 from backend.api.discovery_api import discovery_api
 from backend.api.performance_api import performance_api
-from backend.api.traffic_api import traffic_api
+from backend.api.traffic_api import traffic_bp
 from backend.api.performance_api import list_performance as _snapshot_performance
-from backend.api.traffic_api    import list_traffic     as _snapshot_traffic
+from backend.api.traffic_api    import list_traffic as _snapshot_traffic
 from backend.config.settings import configure_logging
 from backend.snmp_routes import snmp_bp
 from backend.api.health_api import health_api
+import logging
 
 def create_app():
     app = Flask(__name__)
@@ -27,7 +28,7 @@ def create_app():
     app.register_blueprint(access_api, url_prefix='/api/access')
     app.register_blueprint(discovery_api, url_prefix='/api/discovery')
     app.register_blueprint(performance_api, url_prefix='/api/performance')
-    app.register_blueprint(traffic_api, url_prefix='/api/traffic')
+    app.register_blueprint(traffic_bp, url_prefix='/api/traffic')
     app.register_blueprint(health_api,   url_prefix='/api/health')
     app.register_blueprint(snmp_bp, url_prefix='/api/snmp')
 

@@ -3,16 +3,24 @@ import os
 import logging
 import redis
 import json
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.encoders import jsonable_encoder
-import mysql.connector
-from mysql.connector import Error
-from mysql.connector import pooling
-from typing import List, Optional, Any, Tuple
-from pydantic import BaseModel, Field
+import time
 from datetime import datetime
-from fastapi import Body
-from datetime import timedelta
+from typing import List, Optional, Tuple
+from fastapi import BackgroundTasks
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Body
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, Field
+import mysql.connector
+import asyncio
+from backend.modules import traffic as traffic_module
+from mysql.connector import Error, pooling
+from pysnmp.hlapi import (
+    SnmpEngine, CommunityData, UdpTransportTarget,
+    ContextData, ObjectType, ObjectIdentity, getCmd
+)
+from backend.db.traffic_dao import save_traffic_metrics
 
 # --- logging ---
 logging.basicConfig(
@@ -22,6 +30,26 @@ logging.basicConfig(
 logger = logging.getLogger("unisys")
 
 app = FastAPI(title="Unified Network System")
+
+@app.on_event("startup")
+async def startup_event():
+    # run traffic poller in background
+    asyncio.create_task(poll_traffic_loop())
+
+
+
+origins = [
+    "http://localhost:5173",  # your frontend dev server
+    "http://127.0.0.1:5173",  # optional: in case frontend uses 127.0.0.1
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- config from env with sensible defaults ---
 DB_CONFIG = {
@@ -38,18 +66,9 @@ REDIS_PORT = int(os.getenv("UNISYS_REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("UNISYS_REDIS_DB", "0"))
 CACHE_TTL = int(os.getenv("UNISYS_CACHE_TTL", "300"))
 
-redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
-
-DB_CONFIG = {
-    "host": os.getenv("UNISYS_DB_HOST", "localhost"),
-    "user": os.getenv("UNISYS_DB_USER", "unisys_user"),
-    "password": os.getenv("UNISYS_DB_PASS", "StrongP@ssw0rd"),
-    "database": os.getenv("UNISYS_DB_NAME", "unisys"),
-}
-# --- initialize redis client ---
+# --- initialise redis client ---
 try:
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
-    # quick ping to raise early if misconfigured
     redis_client.ping()
     logger.info("Connected to Redis at %s:%s db=%s", REDIS_HOST, REDIS_PORT, REDIS_DB)
 except Exception as e:
@@ -72,10 +91,99 @@ except Exception as e:
     _mysql_pool = None
 
 
+async def poll_traffic_loop():
+    """
+    continuously poll devices every N seconds and insert into db
+    """
+    devices = ["127.0.0.1"]  # add more IPs if needed
+    community = "public"
+    interval = 10  # seconds
+
+    while True:
+        for ip in devices:
+            rows = traffic_module.get_traffic_metrics(ip, community=community, port=1161)
+            if rows:
+                # convert rows to TrafficMetricIn format for bulk insert
+                from app.main import insert_traffic_metrics_bulk
+                from fastapi import Depends
+                from datetime import datetime
+                metrics_payload = []
+                for r in rows:
+                    metrics_payload.append({
+                        "device_ip": r["device_ip"],
+                        "interface_name": r["interface_name"],
+                        "inbound_kbps": r["inbound_kbps"],
+                        "outbound_kbps": r["outbound_kbps"],
+                        "errors": r["errors"],
+                        "timestamp": r["timestamp"]
+                    })
+                try:
+                    # direct call to insert endpoint logic
+                    insert_traffic_metrics_bulk(metrics_payload)
+                except Exception as e:
+                    print(f"Error inserting traffic metrics: {e}")
+        await asyncio.sleep(interval)
+
+
+
+
+
+
+
+# --- SNMP polling ---
+def get_traffic_metrics(device_ip, community, oid):
+    iterator = getCmd(
+        SnmpEngine(),
+        CommunityData(community),
+        UdpTransportTarget((device_ip, 161)),
+        ContextData(),
+        ObjectType(ObjectIdentity(oid))
+    )
+
+    errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
+
+    if errorIndication:
+        logger.error("SNMP error: %s", errorIndication)
+        return None
+    elif errorStatus:
+        logger.error("%s at %s", errorStatus.prettyPrint(),
+                     errorIndex and varBinds[int(errorIndex) - 1][0] or '?')
+        return None
+    else:
+        metrics = {}
+        for varBind in varBinds:
+            metrics[str(varBind[0])] = str(varBind[1])
+        return metrics
+
+def poll_device(device_ip, community, oid):
+    metrics = get_traffic_metrics(device_ip, community, oid)
+    if metrics:
+        logger.info("Polled %s -> %s", device_ip, metrics)
+        rows = [{
+            "device_ip": device_ip,
+            "if_index": 1,
+            "if_descr": oid,
+            "inbound_kbps": float(metrics.get("inOctets", 0)),
+            "outbound_kbps": float(metrics.get("outOctets", 0)),
+            "in_errors": int(metrics.get("inErrors", 0)),
+            "out_errors": int(metrics.get("outErrors", 0)),
+            "last_updated": int(time.time())
+        }]
+        inserted = save_traffic_metrics(rows)
+        logger.info("Saved %d row(s) for %s", inserted, device_ip)
+    else:
+        logger.warning("No metrics returned for %s", device_ip)
+
+if __name__ == "__main__":
+    device_ip = "127.0.0.1"
+    community = "public"
+    oid = "1.3.6.1.2.1.1.3.0"
+    while True:
+        poll_device(device_ip, community, oid)
+        time.sleep(10)
+
+# --- database helpers ---
 def get_db_connection():
-    """
-    Return a MySQL connection. Prefer pooled connections if available.
-    """
     try:
         if _mysql_pool:
             return _mysql_pool.get_connection()
@@ -84,18 +192,7 @@ def get_db_connection():
         logger.exception("Database connection error")
         raise HTTPException(status_code=500, detail=f"Database connection error: {e}")
 
-
 def run_query(query: str, params: Tuple = (), fetch: bool = True, many: bool = False, commit: bool = False, dict_cursor: bool = True):
-    """
-    Helper that executes a query and safely closes cursor/connection.
-    - query: SQL query
-    - params: tuple/list of params (or list of tuples for many=True)
-    - fetch: whether to fetch results
-    - many: use executemany for bulk inserts
-    - commit: commit transaction after executing
-    - dict_cursor: use dictionary cursor for SELECTs
-    Returns fetched results (list) when fetch=True else number of rows affected.
-    """
     conn = None
     cursor = None
     try:
@@ -112,7 +209,6 @@ def run_query(query: str, params: Tuple = (), fetch: bool = True, many: bool = F
         return cursor.rowcount
     except Error as e:
         logger.exception("Database query error: %s -- params=%s", e, params)
-        # Re-raise as HTTPException in endpoints, or return None for internal calls
         raise
     finally:
         try:
@@ -126,20 +222,15 @@ def run_query(query: str, params: Tuple = (), fetch: bool = True, many: bool = F
         except Exception:
             pass
 
-
-# --- basic health ---
+# --- health ---
 @app.get("/")
 def root():
     return {"message": "Unified Network System is running..."}
 
-
 @app.get("/health")
 def health_check():
-    # quick check DB and Redis availability
-    db_ok = True
-    redis_ok = True
+    db_ok, redis_ok = True, True
     try:
-        # very lightweight query
         run_query("SELECT 1", fetch=False)
     except Exception:
         db_ok = False
@@ -150,10 +241,7 @@ def health_check():
             redis_ok = False
     else:
         redis_ok = False
-
-    status = {"db": "ok" if db_ok else "down", "redis": "ok" if redis_ok else "down"}
-    return {"status": status}
-
+    return {"status": {"db": "ok" if db_ok else "down", "redis": "ok" if redis_ok else "down"}}
 
 # --- Pydantic models ---
 class PerformanceMetricIn(BaseModel):
@@ -163,7 +251,6 @@ class PerformanceMetricIn(BaseModel):
     uptime_seconds: float
     timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
-
 class TrafficMetricIn(BaseModel):
     device_ip: str
     interface_name: str
@@ -172,13 +259,11 @@ class TrafficMetricIn(BaseModel):
     errors: int
     timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
-
 class InterfaceSnapshot(BaseModel):
     interface_name: str
     inbound_kbps: float
     outbound_kbps: float
     errors: int
-
 
 class DeviceSnapshot(BaseModel):
     device_ip: str
@@ -187,12 +272,10 @@ class DeviceSnapshot(BaseModel):
     uptime_seconds: float
     interfaces: List[InterfaceSnapshot] = []
 
-
 class InterfaceTrend(BaseModel):
     timestamp: datetime
     inbound_kbps: float
     outbound_kbps: float
-
 
 class DeviceDashboard(BaseModel):
     device_ip: str
@@ -207,7 +290,6 @@ class DeviceDashboard(BaseModel):
     top_interfaces: List[dict] = []
     traffic_trend: List[InterfaceTrend] = []
 
-
 # --- POST endpoints ---
 @app.post("/performance")
 def insert_performance_metric(metric: PerformanceMetricIn):
@@ -221,7 +303,6 @@ def insert_performance_metric(metric: PerformanceMetricIn):
         raise HTTPException(status_code=500, detail=f"Inserting performance metric failed: {e}")
     return {"status": "success", "message": "Performance metric inserted"}
 
-
 @app.post("/traffic")
 def insert_traffic_metric(metric: TrafficMetricIn):
     query = """
@@ -234,13 +315,10 @@ def insert_traffic_metric(metric: TrafficMetricIn):
         raise HTTPException(status_code=500, detail=f"Inserting traffic metric failed: {e}")
     return {"status": "success", "message": "Traffic metric inserted"}
 
-
-# --- BULK POST endpoints ---
 @app.post("/performance/bulk")
 def insert_performance_metrics_bulk(metrics: List[PerformanceMetricIn] = Body(...)):
     if not metrics:
         raise HTTPException(status_code=400, detail="Empty metrics list")
-
     query = """
         INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
         VALUES (%s, %s, %s, %s, %s)
@@ -252,12 +330,10 @@ def insert_performance_metrics_bulk(metrics: List[PerformanceMetricIn] = Body(..
         raise HTTPException(status_code=500, detail=f"Bulk insert performance failed: {e}")
     return {"status": "success", "inserted": len(values)}
 
-
 @app.post("/traffic/bulk")
 def insert_traffic_metrics_bulk(metrics: List[TrafficMetricIn] = Body(...)):
     if not metrics:
         raise HTTPException(status_code=400, detail="Empty metrics list")
-
     query = """
         INSERT INTO traffic_metrics (device_ip, interface_name, inbound_kbps, outbound_kbps, errors, timestamp)
         VALUES (%s, %s, %s, %s, %s, %s)
@@ -269,97 +345,60 @@ def insert_traffic_metrics_bulk(metrics: List[TrafficMetricIn] = Body(...)):
         raise HTTPException(status_code=500, detail=f"Bulk insert traffic failed: {e}")
     return {"status": "success", "inserted": len(values)}
 
-
-# --- GET endpoints with pagination & sorting ---
+# --- GET endpoints ---
 @app.get("/performance", response_model=List[PerformanceMetricIn])
-def get_performance_metrics(
-    limit: int = 10,
-    offset: int = 0,
-    min_cpu: Optional[float] = None,
-    device_ip: Optional[str] = None,
-    sort_by: str = "timestamp",
-    sort_order: str = "desc"
-):
+def get_performance_metrics(limit: int = 10, offset: int = 0, min_cpu: Optional[float] = None, device_ip: Optional[str] = None, sort_by: str = "timestamp", sort_order: str = "desc"):
     allowed_sort = {"cpu_pct", "memory_pct", "uptime_seconds", "timestamp", "device_ip"}
     if sort_by not in allowed_sort:
         raise HTTPException(status_code=400, detail=f"Invalid sort_by value. Allowed: {allowed_sort}")
-    sort_order = sort_order.lower()
-    if sort_order not in {"asc", "desc"}:
+    if sort_order.lower() not in {"asc", "desc"}:
         raise HTTPException(status_code=400, detail="sort_order must be 'asc' or 'desc'")
-
     query = "SELECT device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp FROM performance_metrics WHERE 1=1"
     params = []
-
     if min_cpu is not None:
         query += " AND cpu_pct >= %s"
         params.append(min_cpu)
-    if device_ip is not None:
+    if device_ip:
         query += " AND device_ip = %s"
         params.append(device_ip)
-
     query += f" ORDER BY {sort_by} {sort_order} LIMIT %s OFFSET %s"
     params.extend([limit, offset])
-
     try:
-        results = run_query(query, tuple(params), fetch=True, dict_cursor=True)
+        return run_query(query, tuple(params), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching performance metrics: {e}")
-    return results
-
 
 @app.get("/traffic", response_model=List[TrafficMetricIn])
-def get_traffic_metrics(
-    limit: int = 10,
-    offset: int = 0,
-    min_errors: Optional[int] = None,
-    device_ip: Optional[str] = None,
-    sort_by: str = "timestamp",
-    sort_order: str = "desc"
-):
+def get_traffic_metrics(limit: int = 10, offset: int = 0, min_errors: Optional[int] = None, device_ip: Optional[str] = None, sort_by: str = "timestamp", sort_order: str = "desc"):
     allowed_sort = {"inbound_kbps", "outbound_kbps", "errors", "timestamp", "device_ip", "interface_name"}
     if sort_by not in allowed_sort:
         raise HTTPException(status_code=400, detail=f"Invalid sort_by value. Allowed: {allowed_sort}")
-    sort_order = sort_order.lower()
-    if sort_order not in {"asc", "desc"}:
+    if sort_order.lower() not in {"asc", "desc"}:
         raise HTTPException(status_code=400, detail="sort_order must be 'asc' or 'desc'")
-
-    query = "SELECT device_ip, interface_name, inbound_kbps, outbound_kbps, errors, timestamp FROM traffic_metrics WHERE 1=1"
+    query = "SELECT device_ip, interface_name AS interface_name, inbound_kbps, outbound_kbps, errors, timestamp FROM traffic_metrics WHERE 1=1"
     params = []
-
     if min_errors is not None:
         query += " AND errors >= %s"
         params.append(min_errors)
-    if device_ip is not None:
+    if device_ip:
         query += " AND device_ip = %s"
         params.append(device_ip)
-
     query += f" ORDER BY {sort_by} {sort_order} LIMIT %s OFFSET %s"
     params.extend([limit, offset])
-
     try:
-        results = run_query(query, tuple(params), fetch=True, dict_cursor=True)
+        return run_query(query, tuple(params), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching traffic metrics: {e}")
-    return results
 
-
+# --- devices and dashboard endpoints ---
 @app.get("/devices", response_model=List[DeviceSnapshot])
-def get_device_snapshots(
-    device_ip: Optional[str] = None,
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    min_cpu: Optional[float] = None,
-    min_errors: Optional[int] = None,
-    limit: int = 10,
-    offset: int = 0,
-    sort_by: str = "device_ip",
-    sort_order: str = "asc"
-):
+def get_device_snapshots(device_ip: Optional[str] = None, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
+                         min_cpu: Optional[float] = None, min_errors: Optional[int] = None, limit: int = 10, offset: int = 0,
+                         sort_by: str = "device_ip", sort_order: str = "asc"):
     allowed_sort = {"device_ip", "cpu_pct", "memory_pct", "uptime_seconds"}
     if sort_by not in allowed_sort:
         raise HTTPException(status_code=400, detail=f"Invalid sort_by value. Allowed: {allowed_sort}")
-    sort_order = sort_order.lower()
-    if sort_order not in {"asc", "desc"}:
+    if sort_order.lower() not in {"asc", "desc"}:
         raise HTTPException(status_code=400, detail="sort_order must be 'asc' or 'desc'")
 
     query = """
@@ -368,7 +407,7 @@ def get_device_snapshots(
             p.cpu_pct,
             p.memory_pct,
             p.uptime_seconds,
-            t.interface_name,
+            t.interface_name,        
             t.inbound_kbps,
             t.outbound_kbps,
             t.errors
@@ -377,7 +416,6 @@ def get_device_snapshots(
         WHERE 1=1
     """
     params = []
-
     if device_ip:
         query += " AND p.device_ip = %s"
         params.append(device_ip)
@@ -420,11 +458,9 @@ def get_device_snapshots(
                 "outbound_kbps": row["outbound_kbps"],
                 "errors": row["errors"]
             })
-
     return list(devices.values())
 
-
-# --- aggregation endpoints (keep behavior the same) ---
+# --- aggregations (top cpu/memory/errors) ---
 @app.get("/performance/top-cpu")
 def top_cpu_devices(limit: int = 5):
     query = """
@@ -435,11 +471,9 @@ def top_cpu_devices(limit: int = 5):
         LIMIT %s
     """
     try:
-        results = run_query(query, (limit,), fetch=True, dict_cursor=True)
+        return run_query(query, (limit,), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching top cpu devices: {e}")
-    return results
-
 
 @app.get("/performance/top-memory")
 def top_memory_devices(limit: int = 5):
@@ -451,11 +485,9 @@ def top_memory_devices(limit: int = 5):
         LIMIT %s
     """
     try:
-        results = run_query(query, (limit,), fetch=True, dict_cursor=True)
+        return run_query(query, (limit,), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching top memory devices: {e}")
-    return results
-
 
 @app.get("/traffic/errors-summary")
 def traffic_errors_summary(min_errors: int = 1):
@@ -467,240 +499,175 @@ def traffic_errors_summary(min_errors: int = 1):
         ORDER BY total_errors DESC
     """
     try:
-        results = run_query(query, (min_errors,), fetch=True, dict_cursor=True)
+        return run_query(query, (min_errors,), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching traffic errors summary: {e}")
-    return results
-
 
 @app.get("/traffic/top-interfaces")
 def top_traffic_interfaces(limit: int = 5):
     query = """
-        SELECT device_ip, interface_name, (inbound_kbps + outbound_kbps) AS total_kbps
+        SELECT device_ip, interface_name, SUM(inbound_kbps) AS total_inbound, SUM(outbound_kbps) AS total_outbound
         FROM traffic_metrics
-        ORDER BY total_kbps DESC
+        GROUP BY device_ip, interface_name
+        ORDER BY total_inbound DESC
         LIMIT %s
     """
     try:
-        results = run_query(query, (limit,), fetch=True, dict_cursor=True)
+        return run_query(query, (limit,), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching top interfaces: {e}")
-    return results
+
+# --- caching example for dashboard ---
+def cache_get(key):
+    if not redis_client:
+        return None
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+def cache_set(key, value, ttl=CACHE_TTL):
+    if not redis_client:
+        return
+    redis_client.set(key, json.dumps(value, default=str), ex=ttl)
+
+@app.get("/dashboard/{device_ip}", response_model=DeviceDashboard)
+def get_device_dashboard(device_ip: str):
+    cached = cache_get(f"dashboard:{device_ip}")
+    if cached:
+        return cached
+    try:
+        perf = run_query("SELECT cpu_pct, memory_pct, uptime_seconds FROM performance_metrics WHERE device_ip=%s ORDER BY timestamp DESC LIMIT 1", (device_ip,), fetch=True)
+        traffic_rows = run_query("SELECT interface_name, inbound_kbps, outbound_kbps, errors FROM traffic_metrics WHERE device_ip=%s ORDER BY timestamp DESC LIMIT 10", (device_ip,), fetch=True)
+        total_inbound = sum([r["inbound_kbps"] for r in traffic_rows])
+        total_outbound = sum([r["outbound_kbps"] for r in traffic_rows])
+        total_errors = sum([r["errors"] for r in traffic_rows])
+        top_interfaces = sorted(traffic_rows, key=lambda x: x["inbound_kbps"], reverse=True)[:5]
+        dashboard = DeviceDashboard(
+            device_ip=device_ip,
+            cpu_pct=perf[0]["cpu_pct"] if perf else None,
+            memory_pct=perf[0]["memory_pct"] if perf else None,
+            uptime_seconds=perf[0]["uptime_seconds"] if perf else None,
+            total_inbound=total_inbound,
+            total_outbound=total_outbound,
+            total_errors=total_errors,
+            top_interfaces=top_interfaces,
+            traffic_trend=[InterfaceTrend(timestamp=datetime.utcnow(), inbound_kbps=r["inbound_kbps"], outbound_kbps=r["outbound_kbps"]) for r in traffic_rows]
+        )
+        cache_set(f"dashboard:{device_ip}", jsonable_encoder(dashboard))
+        return dashboard
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching dashboard: {e}")
+
+@app.get("/traffic/device/{device_ip}/recent")
+def get_device_recent_traffic(device_ip: str, limit: int = 0):
+    """
+    Return recent traffic metrics for device_ip.
+
+    - If ?limit=N and N>0 -> return up to N recent rows (ordered by timestamp desc).
+    - If no limit (or limit==0) -> return one latest row per interface (most useful for dashboards).
+    """
+    try:
+        # Raw recent rows if requested
+        if limit and limit > 0:
+            sql = """
+                SELECT device_ip, interface_name, inbound_kbps, outbound_kbps,
+                       in_errors, out_errors, errors, timestamp
+                FROM traffic_metrics
+                WHERE device_ip = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """
+            rows = run_query(sql, (device_ip, limit), fetch=True)
+            return {"device_ip": device_ip, "rows": rows}
+
+        # Default: latest row per interface
+        sql = """
+            SELECT t.device_ip, t.interface_name, t.inbound_kbps, t.outbound_kbps,
+                   t.in_errors, t.out_errors, t.errors, t.timestamp
+            FROM traffic_metrics t
+            JOIN (
+                SELECT interface_name, MAX(timestamp) AS ts
+                FROM traffic_metrics
+                WHERE device_ip = %s
+                GROUP BY interface_name
+            ) m ON t.interface_name = m.interface_name AND t.timestamp = m.ts
+            WHERE t.device_ip = %s
+            ORDER BY t.interface_name
+        """
+        rows = run_query(sql, (device_ip, device_ip), fetch=True)
+        return {"device_ip": device_ip, "latest_per_interface": rows}
+
+    except Exception as e:
+        # keep message short but actionable for frontend/devs
+        raise HTTPException(status_code=500, detail=f"Error fetching recent metrics: {e}")
+    
 
 
-# --- time-based aggregation endpoints ---
-@app.get("/performance/average")
-def average_performance_metrics(
-    period_hours: int = 1,
-    device_ip: Optional[str] = None
+# -----------------------
+# PERFORMANCE HISTORY
+# -----------------------
+@app.get("/performance/history")
+def get_performance_history(
+    device_ip: Optional[str] = Query(None, description="Filter by device IP"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
+    """
+    Returns historical CPU/Memory usage.
+    """
     query = """
-        SELECT device_ip, 
-               AVG(cpu_pct) AS avg_cpu,
-               AVG(memory_pct) AS avg_memory,
-               MAX(uptime_seconds) AS max_uptime
+        SELECT device_ip, cpu_pct, memory_pct, timestamp
         FROM performance_metrics
-        WHERE timestamp >= NOW() - INTERVAL %s HOUR
+        WHERE 1=1
     """
-    params = [period_hours]
+    params = []
+
     if device_ip:
         query += " AND device_ip = %s"
         params.append(device_ip)
-    query += " GROUP BY device_ip ORDER BY avg_cpu DESC"
+
+    query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
 
     try:
-        results = run_query(query, tuple(params), fetch=True, dict_cursor=True)
+        return run_query(query, tuple(params), fetch=True, dict_cursor=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching average performance: {e}")
-    return results
+        raise HTTPException(status_code=500, detail=f"Error fetching performance history: {e}")
 
 
-@app.get("/traffic/total")
-def total_traffic_metrics(
-    period_hours: int = 1,
-    device_ip: Optional[str] = None
+# -----------------------
+# TRAFFIC HISTORY
+# -----------------------
+@app.get("/traffic/history")
+def get_traffic_history(
+    device_ip: Optional[str] = Query(None, description="Filter by device IP"),
+    interface_name: Optional[str] = Query(None, description="Filter by interface name"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
+    """
+    Returns historical traffic metrics (kbps + errors).
+    """
     query = """
-        SELECT device_ip,
-               SUM(inbound_kbps) AS total_inbound,
-               SUM(outbound_kbps) AS total_outbound,
-               SUM(errors) AS total_errors
+        SELECT device_ip, interface_name, inbound_kbps, outbound_kbps, errors, timestamp
         FROM traffic_metrics
-        WHERE timestamp >= NOW() - INTERVAL %s HOUR
+        WHERE 1=1
     """
-    params = [period_hours]
+    params = []
+
     if device_ip:
         query += " AND device_ip = %s"
         params.append(device_ip)
-    query += " GROUP BY device_ip ORDER BY total_inbound DESC"
+
+    if interface_name:
+        query += " AND interface_name = %s"
+        params.append(interface_name)
+
+    query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
 
     try:
-        results = run_query(query, tuple(params), fetch=True, dict_cursor=True)
+        return run_query(query, tuple(params), fetch=True, dict_cursor=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching total traffic: {e}")
-    return results
-
-
-@app.get("/traffic/trend")
-def traffic_trend(
-    period_hours: int = 24,
-    interval_minutes: int = 60,
-    device_ip: Optional[str] = None
-):
-    query = """
-        SELECT 
-            device_ip,
-            FLOOR(UNIX_TIMESTAMP(timestamp) / (%s*60)) AS interval_bucket,
-            SUM(inbound_kbps) AS inbound_sum,
-            SUM(outbound_kbps) AS outbound_sum
-        FROM traffic_metrics
-        WHERE timestamp >= NOW() - INTERVAL %s HOUR
-    """
-    params = [interval_minutes, period_hours]
-    if device_ip:
-        query += " AND device_ip = %s"
-        params.append(device_ip)
-    query += " GROUP BY device_ip, interval_bucket ORDER BY interval_bucket ASC"
-
-    try:
-        results = run_query(query, tuple(params), fetch=True, dict_cursor=True)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching traffic trend: {e}")
-    return results
-
-
-# --- dashboard with caching ---
-@app.get("/devices/dashboard", response_model=List[DeviceDashboard])
-def devices_dashboard(
-    period_hours: int = 1,
-    interval_minutes: int = 10,
-    top_interfaces_limit: int = 3,
-    use_cache: bool = True
-):
-    cache_key = f"dashboard_{period_hours}_{interval_minutes}_{top_interfaces_limit}"
-    if use_cache and redis_client:
-        cached = redis_client.get(cache_key)
-        if cached:
-            try:
-                return json.loads(cached)
-            except Exception:
-                logger.exception("Failed to decode cached dashboard; regenerating")
-
-    try:
-        # Latest perf
-        perf_rows = run_query("""
-            SELECT p1.device_ip, p1.cpu_pct, p1.memory_pct, p1.uptime_seconds
-            FROM performance_metrics p1
-            INNER JOIN (
-                SELECT device_ip, MAX(timestamp) AS max_ts
-                FROM performance_metrics
-                GROUP BY device_ip
-            ) p2 ON p1.device_ip = p2.device_ip AND p1.timestamp = p2.max_ts
-        """, tuple(), fetch=True, dict_cursor=True) or []
-
-        # Average
-        avg_rows_list = run_query("""
-            SELECT device_ip,
-                   AVG(cpu_pct) AS avg_cpu,
-                   AVG(memory_pct) AS avg_memory
-            FROM performance_metrics
-            WHERE timestamp >= NOW() - INTERVAL %s HOUR
-            GROUP BY device_ip
-        """, (period_hours,), fetch=True, dict_cursor=True) or []
-        avg_rows = {r['device_ip']: r for r in avg_rows_list}
-
-        # Traffic totals
-        traffic_rows_list = run_query("""
-            SELECT device_ip,
-                   SUM(inbound_kbps) AS total_inbound,
-                   SUM(outbound_kbps) AS total_outbound,
-                   SUM(errors) AS total_errors
-            FROM traffic_metrics
-            WHERE timestamp >= NOW() - INTERVAL %s HOUR
-            GROUP BY device_ip
-        """, (period_hours,), fetch=True, dict_cursor=True) or []
-        traffic_rows = {r['device_ip']: r for r in traffic_rows_list}
-
-        # Top interfaces
-        iface_rows_list = run_query("""
-            SELECT device_ip, interface_name, (inbound_kbps + outbound_kbps) AS total_kbps
-            FROM traffic_metrics t1
-            WHERE timestamp >= NOW() - INTERVAL %s HOUR
-            ORDER BY device_ip, total_kbps DESC
-        """, (period_hours,), fetch=True, dict_cursor=True) or []
-        iface_rows = {}
-        for row in iface_rows_list:
-            iface_rows.setdefault(row['device_ip'], []).append({
-                "interface_name": row["interface_name"],
-                "total_kbps": row["total_kbps"]
-            })
-
-        # Trend
-        trend_rows_list = run_query("""
-            SELECT device_ip,
-                   FLOOR(UNIX_TIMESTAMP(timestamp) / (%s*60)) AS interval_bucket,
-                   SUM(inbound_kbps) AS inbound_sum,
-                   SUM(outbound_kbps) AS outbound_sum,
-                   MIN(timestamp) AS ts
-            FROM traffic_metrics
-            WHERE timestamp >= NOW() - INTERVAL %s HOUR
-            GROUP BY device_ip, interval_bucket
-            ORDER BY device_ip, interval_bucket
-        """, (interval_minutes, period_hours), fetch=True, dict_cursor=True) or []
-        trend_rows = {}
-        for row in trend_rows_list:
-            trend_rows.setdefault(row['device_ip'], []).append({
-                "timestamp": row["ts"],
-                "inbound_kbps": row["inbound_sum"],
-                "outbound_kbps": row["outbound_sum"]
-            })
-
-        # Assemble
-        dashboard = {}
-        for row in perf_rows:
-            ip = row["device_ip"]
-            avg_data = avg_rows.get(ip) or {"avg_cpu": row["cpu_pct"], "avg_memory": row["memory_pct"]}
-            dashboard[ip] = {
-                "device_ip": ip,
-                "cpu_pct": row["cpu_pct"],
-                "memory_pct": row["memory_pct"],
-                "uptime_seconds": row["uptime_seconds"],
-                "avg_cpu": avg_data.get("avg_cpu"),
-                "avg_memory": avg_data.get("avg_memory"),
-                "total_inbound": traffic_rows.get(ip, {}).get("total_inbound", 0),
-                "total_outbound": traffic_rows.get(ip, {}).get("total_outbound", 0),
-                "total_errors": traffic_rows.get(ip, {}).get("total_errors", 0),
-                "top_interfaces": iface_rows.get(ip, [])[:top_interfaces_limit],
-                "traffic_trend": trend_rows.get(ip, [])
-            }
-
-        # Add devices that only exist in traffic_rows
-        for ip in set(traffic_rows.keys()) - set(dashboard.keys()):
-            dashboard[ip] = {
-                "device_ip": ip,
-                "cpu_pct": None,
-                "memory_pct": None,
-                "uptime_seconds": None,
-                "avg_cpu": avg_rows.get(ip, {}).get("avg_cpu"),
-                "avg_memory": avg_rows.get(ip, {}).get("avg_memory"),
-                "total_inbound": traffic_rows[ip]["total_inbound"],
-                "total_outbound": traffic_rows[ip]["total_outbound"],
-                "total_errors": traffic_rows[ip]["total_errors"],
-                "top_interfaces": iface_rows.get(ip, [])[:top_interfaces_limit],
-                "traffic_trend": trend_rows.get(ip, [])
-            }
-
-        result = list(dashboard.values())
-
-        if use_cache and redis_client:
-            try:
-                payload = json.dumps(jsonable_encoder(result), default=str)
-                redis_client.setex(cache_key, CACHE_TTL, payload)
-            except Exception:
-                logger.exception("Failed to cache dashboard")
-
-        return result
-
-    except Exception as e:
-        logger.exception("Error generating dashboard")
-        raise HTTPException(status_code=500, detail=f"Error generating dashboard: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching traffic history: {e}")
