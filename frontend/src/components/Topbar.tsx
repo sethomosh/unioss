@@ -1,69 +1,108 @@
-import { useState } from 'react';
+// src/components/Topbar.tsx
+import React, { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
-import { useHealth } from '../hooks/useApi';
+import { Alerts } from '../pages/Alerts';
+import { apiClient, Alert } from '../utils/api';
 
-export function Topbar({ title }: { title: string }) {
-  const { data: health } = useHealth();
-  const [searchQuery, setSearchQuery] = useState('');
+type TopbarProps = {
+  title?: string;
+  onSidebarToggle?: () => void;
+};
 
-  const servicePill = (name: string, up: boolean) => (
-    <span className={`px-2 py-0.5 rounded-full text-xs ${up ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-      {name}: {up ? 'up' : 'down'}
-    </span>
-  );
+const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle }) => {
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        const data = await apiClient.getAlerts();
+        setAlerts(data);
+      } catch (err) {
+        console.error('Failed to fetch alerts', err);
+      }
+    };
+    fetchAlerts();
+  }, []);
+
+  // close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleAcknowledge = (id: string) => {
+    setAlerts((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a))
+    );
+  };
 
   return (
-    <div className="sticky top-0 z-40 bg-card border-b border-border px-4 py-3 flex items-center justify-between shadow-sm" role="banner">
-      <div className="flex items-center gap-3 min-w-0">
-        <svg width="24" height="24" viewBox="0 0 24 24" className="text-primary flex-shrink-0" aria-hidden>
-          <path fill="currentColor" d="M12 2l7 4v4l-7 4-7-4V6l7-4Zm0 8l7-4v12l-7 4-7-4V6l7 4Z"/>
-        </svg>
-        <span className="font-bold tracking-wide flex-shrink-0">UNIOSS</span>
-        <span className="text-muted-foreground flex-shrink-0">/</span>
-        <span className="font-medium truncate">{title}</span>
+    <header className="w-full h-16 border-b border-border bg-card flex items-center px-4 sticky top-0 z-20">
+      <div className="flex items-center gap-3">
+        {/* sidebar toggle for mobile */}
+        <button
+          className="p-2 rounded md:hidden hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring"
+          onClick={onSidebarToggle}
+          aria-label="Toggle sidebar"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        <Link to="/" className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary rounded flex items-center justify-center text-white font-bold text-base">
+            UNIOSS
+          </div>
+        </Link>
+
+        <div className="text-sm font-semibold tracking-wide capitalize text-foreground truncate">{title}</div>
       </div>
 
-      <div className="flex items-center gap-3">
-        {/* Search box/device quick-picker */}
-        <div className="relative hidden md:block">
-          <input
-            type="text"
-            placeholder="Search devices..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-64 px-3 py-1.5 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-muted-foreground"
-          >
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" />
+      <div className="flex-1" />
+
+      <div className="relative flex items-center gap-3">
+        <button
+          aria-label="notifications"
+          title="notifications"
+          className="relative p-2 rounded-md hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring"
+          onClick={() => setShowDropdown(!showDropdown)}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M15 17H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path
+              d="M12 3C9.239 3 7 5.239 7 8V11C7 12.93 6.32 14.68 5.222 15.828L4 17.2C3.447 17.82 4.018 18.75 4.78 18.75H19.22C19.982 18.75 20.553 17.82 20 17.2L18.778 15.828C17.68 14.68 17 12.93 17 11V8C17 5.239 14.761 3 12 3Z"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+            />
           </svg>
-        </div>
-        
-        <button className="relative p-2 rounded-lg hover:bg-muted/40" aria-label="Notifications">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
-            <path d="M13.73 21a2 2 0 01-3.46 0"/>
-          </svg>
-          <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-[10px] px-1 rounded">3</span>
-        </button>
-        <div className="hidden md:flex items-center gap-2">
-          {health && (
-            <div className="flex items-center gap-2">
-              {servicePill('DB', health.services?.db !== 'down')}
-              {servicePill('Redis', health.services?.redis !== 'down')}
-            </div>
+          {alerts.length > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-medium leading-none text-card bg-destructive rounded-full">
+              {alerts.filter(a => !a.acknowledged).length}
+            </span>
           )}
-        </div>
+        </button>
+
+        {/* dropdown */}
+        {showDropdown && (
+          <div ref={dropdownRef} className="absolute right-0 mt-2 z-50">
+            <Alerts alerts={alerts} onAcknowledge={handleAcknowledge} />
+          </div>
+        )}
+
         <ThemeToggle />
       </div>
-    </div>
+    </header>
   );
-}
+};
+
+export default Topbar;

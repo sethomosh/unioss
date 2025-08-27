@@ -1,78 +1,77 @@
-import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
+import { NavLink } from 'react-router-dom';
 
-interface NavItem {
-  path: string;
-  label: string;
-  icon: string;
-}
-
-const navItems: NavItem[] = [
-  { path: '/', label: 'Dashboard', icon: '📊' },
-  { path: '/devices', label: 'Devices', icon: '🖥️' },
-  { path: '/performance', label: 'Performance', icon: '⚡' },
-  { path: '/performance-history', label: 'Performance History', icon: '📈' },
-  { path: '/traffic', label: 'Traffic', icon: '🌐' },
-  { path: '/access', label: 'Access', icon: '🔐' },
-  { path: '/alerts', label: 'Alerts', icon: '🚨' },
-  { path: '/analytics', label: 'Analytics', icon: '📅' },
-  { path: '/tools/snmp', label: 'SNMP Tools', icon: '🔧' },
-  { path: '/settings', label: 'Settings', icon: '⚙️' },
+const nav = [
+  { to: '/', label: 'dashboard', icon: (size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <path d="M3 13h8V3H3v10zM13 21h8V11h-8v10zM13 3v6h8V3h-8zM3 21h8v-6H3v6z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )},
+  { to: '/devices', label: 'devices', icon: (size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 20h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )},
+  { to: '/analytics', label: 'calendar', icon: (size = 16) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M16 3v4M8 3v4M3 11h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )},
 ];
 
-export function Sidebar() {
-  const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+export const Sidebar: React.FC<{collapsed?: boolean; onToggle?: () => void}> = ({ collapsed, onToggle }) => {
+  const [isCollapsed, setIsCollapsed] = useState(collapsed ?? false);
+  const toggle = () => { setIsCollapsed(!isCollapsed); onToggle?.(); };
 
   return (
-    <aside
-      className={`bg-sidebar border-r border-border transition-all duration-300`}
-      style={{
-        width: collapsed ? 64 : 256,
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        position: 'sticky',
-        top: 0,
-      }}
-      role="navigation"
-      aria-label="Primary"
-    >
-      <div className="p-4" style={{ flex: 1, overflowY: 'auto' }}>
-        {/* Toggle Button */}
+    <aside className={`flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-200
+      ${isCollapsed ? 'w-16' : 'w-72'} min-h-screen`}>
+      
+      {/* logo & toggle */}
+      <div className="flex items-center justify-between p-4">
+        {!isCollapsed && <div className="text-2xl font-bold tracking-wide">UNIOSS</div>}
         <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="w-full p-2 rounded hover:bg-sidebar-accent/20 transition-colors mb-4"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={toggle}
+          className="p-1 rounded hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring"
+          aria-label="Toggle sidebar"
         >
-          {collapsed ? '→' : '←'}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
         </button>
-
-        {/* Navigation Items */}
-        <nav className="space-y-2 flex flex-col">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`block px-3 py-2 rounded-lg whitespace-nowrap overflow-hidden ${
-                  isActive
-                    ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                    : 'text-sidebar-foreground hover:bg-sidebar-accent/20'
-                }`}
-                style={{ display: 'flex', alignItems: 'center', gap: 12 }}
-              >
-                <span className="text-lg">{item.icon}</span>
-                {!collapsed && (
-                  <span className="font-medium">{item.label}</span>
-                )}
-              </Link>
-            );
-          })}
-        </nav>
       </div>
+
+      {/* nav links */}
+      <nav className="flex-1 flex flex-col gap-1 px-2" aria-label="main navigation">
+        {nav.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.to === '/'}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                isActive ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'hover:bg-muted/10'
+              }`
+            }
+            aria-current={({ isActive }) => (isActive ? 'page' : undefined)}
+          >
+            <span className="w-5 h-5 flex-shrink-0">{item.icon(16)}</span>
+            {!isCollapsed && <span className="capitalize">{item.label}</span>}
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* version */}
+      {!isCollapsed && (
+        <div className="mt-auto p-4 text-xs text-muted-foreground">
+          <div>version</div>
+          <div className="text-sm font-mono">0.1.0</div>
+        </div>
+      )}
     </aside>
   );
-}
+};
 
+export default Sidebar;

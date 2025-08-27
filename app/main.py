@@ -4,6 +4,7 @@ import logging
 import redis
 import json
 import time
+import random
 from datetime import datetime
 from typing import List, Optional, Tuple
 from fastapi import BackgroundTasks
@@ -35,7 +36,7 @@ app = FastAPI(title="Unified Network System")
 async def startup_event():
     # run traffic poller in background
     asyncio.create_task(poll_traffic_loop())
-
+    asyncio.create_task(poll_performance_loop())
 
 
 origins = [
@@ -93,39 +94,66 @@ except Exception as e:
 
 async def poll_traffic_loop():
     """
-    continuously poll devices every N seconds and insert into db
+    continuously generate demo traffic metrics every N seconds
     """
-    devices = ["127.0.0.1"]  # add more IPs if needed
-    community = "public"
+    devices = ["127.0.0.1"]
     interval = 10  # seconds
 
     while True:
+        metrics_payload = []
         for ip in devices:
-            rows = traffic_module.get_traffic_metrics(ip, community=community, port=1161)
-            if rows:
-                # convert rows to TrafficMetricIn format for bulk insert
-                from app.main import insert_traffic_metrics_bulk
-                from fastapi import Depends
-                from datetime import datetime
-                metrics_payload = []
-                for r in rows:
-                    metrics_payload.append({
-                        "device_ip": r["device_ip"],
-                        "interface_name": r["interface_name"],
-                        "inbound_kbps": r["inbound_kbps"],
-                        "outbound_kbps": r["outbound_kbps"],
-                        "errors": r["errors"],
-                        "timestamp": r["timestamp"]
-                    })
-                try:
-                    # direct call to insert endpoint logic
-                    insert_traffic_metrics_bulk(metrics_payload)
-                except Exception as e:
-                    print(f"Error inserting traffic metrics: {e}")
+            metrics_payload.append({
+                "device_ip": ip,
+                "interface_name": "eth0",
+                "inbound_kbps": round(random.uniform(100, 1000), 2),
+                "outbound_kbps": round(random.uniform(50, 800), 2),
+                "errors": random.randint(0, 5),
+                "timestamp": datetime.utcnow()
+            })
+            metrics_payload.append({
+                "device_ip": ip,
+                "interface_name": "eth1",
+                "inbound_kbps": round(random.uniform(200, 1200), 2),
+                "outbound_kbps": round(random.uniform(100, 900), 2),
+                "errors": random.randint(0, 2),
+                "timestamp": datetime.utcnow()
+            })
+
+        try:
+            insert_traffic_metrics_bulk([TrafficMetricIn(**m) for m in metrics_payload])
+            logger.info("Inserted %d demo traffic rows", len(metrics_payload))
+        except Exception as e:
+            logger.error("Error inserting demo traffic: %s", e)
+
         await asyncio.sleep(interval)
 
+async def poll_performance_loop():
+    """
+    Continuously generate demo performance metrics every N seconds.
+    """
+    devices = ["127.0.0.1"]
+    interval = 10  # seconds
+    uptime_counters = {ip: 0 for ip in devices}
 
+    while True:
+        metrics_payload = []
+        for ip in devices:
+            uptime_counters[ip] += interval
+            metrics_payload.append({
+                "device_ip": ip,
+                "cpu_pct": round(random.uniform(5, 95), 2),
+                "memory_pct": round(random.uniform(10, 90), 2),
+                "uptime_seconds": uptime_counters[ip],
+                "timestamp": datetime.utcnow()
+            })
 
+        try:
+            insert_performance_metrics_bulk([PerformanceMetricIn(**m) for m in metrics_payload])
+            logger.info("Inserted %d demo performance rows", len(metrics_payload))
+        except Exception as e:
+            logger.error("Error inserting demo performance: %s", e)
+
+        await asyncio.sleep(interval)
 
 
 

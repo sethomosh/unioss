@@ -1,84 +1,75 @@
-import { useEffect, useState } from 'react';
+// src/components/ThemeToggle.tsx
+import React, { useEffect, useState } from 'react';
 
-export function ThemeToggle() {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+const THEME_KEY = 'unisys:theme'; // localstorage key
+
+export const ThemeToggle: React.FC = () => {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === 'dark' || saved === 'light') return saved;
+    } catch (e) {}
+    // fallback to system preference
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+    return 'light';
+  });
 
   useEffect(() => {
-    const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
-    if (stored) {
-      setTheme(stored);
-      document.documentElement.classList.toggle('dark', stored === 'dark');
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
     } else {
-      // If no stored choice, respect system preference; default to light if unavailable
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const initial = prefersDark ? 'dark' : 'light';
-      setTheme(initial);
-      document.documentElement.classList.toggle('dark', initial === 'dark');
-      localStorage.setItem('theme', initial);
+      root.classList.remove('dark');
     }
-    
-    // Listen for theme changes from Settings page
-    const handleThemeChange = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      const newTheme = customEvent.detail;
-      if (newTheme === 'system') {
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        setTheme(prefersDark ? 'dark' : 'light');
-        document.documentElement.classList.toggle('dark', prefersDark);
-      } else {
-        setTheme(newTheme);
-        document.documentElement.classList.toggle('dark', newTheme === 'dark');
-      }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch (e) {}
+  }, [theme]);
+
+  useEffect(() => {
+    // listen to system changes if user hasn't explicitly saved a preference
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const handler = (ev: MediaQueryListEvent) => {
+      try {
+        const saved = localStorage.getItem(THEME_KEY);
+        if (saved !== 'light' && saved !== 'dark') {
+          setTheme(ev.matches ? 'dark' : 'light');
+        }
+      } catch (e) {}
     };
-    
-    window.addEventListener('theme-change', handleThemeChange);
-    
+    if (mq?.addEventListener) mq.addEventListener('change', handler);
+    else if (mq?.addListener) mq.addListener(handler);
     return () => {
-      window.removeEventListener('theme-change', handleThemeChange);
+      if (mq?.removeEventListener) mq.removeEventListener('change', handler);
+      else if (mq?.removeListener) mq.removeListener(handler);
     };
   }, []);
 
-  const toggleTheme = () => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
-  };
+  const toggle = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
   return (
     <button
-      onClick={toggleTheme}
-      className="p-2 rounded-lg bg-muted hover:bg-accent/20 transition-colors"
-      aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+      aria-label="toggle theme"
+      title="toggle theme"
+      onClick={toggle}
+      className="p-2 rounded-md hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-primary"
     >
-      {theme === 'light' ? (
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      {theme === 'dark' ? (
+        // sun icon (light mode)
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.2" />
         </svg>
       ) : (
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="5" />
-          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+        // moon icon (dark mode)
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
     </button>
   );
-} 
+};
+
+export default ThemeToggle;
