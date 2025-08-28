@@ -1,183 +1,230 @@
 // src/pages/DevicesPage.tsx
 import React, { useEffect, useState } from 'react';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts';
-import { apiClient, Device, Performance, Traffic } from '../utils/api';
-
-type ConnectedDevice = { ip: string; interface: string; status: 'up' | 'down' };
+import { apiService } from '../services/apiService';
+import { Device, PerformanceMetrics, Session, Alert, SNMPData } from '../types/types';
 
 export const DevicesPage: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
-  const [performance, setPerformance] = useState<Performance[]>([]);
-  const [traffic, setTraffic] = useState<Traffic[]>([]);
-  const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>([]);
+  const [performance, setPerformance] = useState<Record<string, PerformanceMetrics>>({});
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // fetch devices and select first
-  const fetchDevices = async () => {
+  // SNMP tool state
+  const [deviceIp, setDeviceIp] = useState('');
+  const [oid, setOid] = useState('');
+  const [snmpResult, setSnmpResult] = useState<SNMPData | null>(null);
+  const [snmpLoading, setSnmpLoading] = useState(false);
+  const [snmpError, setSnmpError] = useState<string | null>(null);
+
+  const commonOIDs = [
+    { name: 'SysDescr', oid: '1.3.6.1.2.1.1.1.0' },
+    { name: 'SysUpTime', oid: '1.3.6.1.2.1.1.3.0' },
+    { name: 'SysContact', oid: '1.3.6.1.2.1.1.4.0' },
+    { name: 'SysName', oid: '1.3.6.1.2.1.1.5.0' },
+    { name: 'SysLocation', oid: '1.3.6.1.2.1.1.6.0' },
+  ];
+
+  // SNMP handlers
+  const handleSNMPGet = async () => {
+    setSnmpLoading(true);
+    setSnmpError(null);
     try {
-      const deviceList = await apiClient.getDevices().catch(() => [] as Device[]);
-
-      const devicesToUse =
-        deviceList.length > 0
-          ? deviceList
-          : Array.from({ length: 10 }).map((_, i) => ({
-              ip: `192.168.0.${i + 1}`,
-              type: i % 2 === 0 ? 'Router' : 'Switch',
-              status: i % 3 === 0 ? 'down' : 'up',
-              last_updated: new Date().toISOString(),
-            }));
-
-      setDevices(devicesToUse);
-      if (devicesToUse.length > 0) setSelectedDevice(devicesToUse[0]);
-    } catch (err) {
-      console.error('Failed to fetch devices', err);
+      const result = await apiService.getSNMPData(deviceIp, oid);
+      setSnmpResult(result);
+    } catch (err: unknown) {
+      setSnmpError(err instanceof Error ? err.message : 'SNMP GET failed');
+    } finally {
+      setSnmpLoading(false);
     }
   };
 
-  const fetchDeviceDetails = async (deviceIp: string) => {
+  const handleSNMPWalk = async () => {
+    setSnmpLoading(true);
+    setSnmpError(null);
     try {
-      const [perf, traf] = await Promise.all([
-        apiClient.getPerformance(deviceIp).catch(() => [] as Performance[]),
-        apiClient.getTraffic(deviceIp).catch(() => [] as Traffic[]),
-      ]);
-      setPerformance(perf);
-      setTraffic(traf);
-
-      // mock connected devices for now
-      const mockConnections: ConnectedDevice[] = Array.from({ length: 3 }).map((_, i) => ({
-        ip: `192.168.0.${Math.floor(Math.random() * 10) + 1}`,
-        interface: `eth${i}`,
-        status: Math.random() > 0.3 ? 'up' : 'down',
-      }));
-      setConnectedDevices(mockConnections);
-    } catch (err) {
-      console.error('Failed to fetch device details', err);
+      const result = await apiService.walkSNMP(deviceIp, oid);
+      setSnmpResult(result);
+    } catch (err: unknown) {
+      setSnmpError(err instanceof Error ? err.message : 'SNMP WALK failed');
+    } finally {
+      setSnmpLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchDevices();
+    const loadData = async () => {
+      try {
+        const [devs, sess, perf, al] = await Promise.all([
+          apiService.getDevices(),
+          apiService.getSessions(),
+          apiService.getPerformance(),
+          apiService.getAlerts(),
+        ]);
+
+        setDevices(devs);
+        setSessions(sess);
+
+        const perfMap: Record<string, PerformanceMetrics> = {};
+        perf.forEach(p => {
+          if (p.device_ip) perfMap[p.device_ip] = p;
+        });
+        setPerformance(perfMap);
+
+        setAlerts(al);
+      } catch (err) {
+        console.error('Error loading device data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
   }, []);
 
-  useEffect(() => {
-    if (selectedDevice) fetchDeviceDetails(selectedDevice.ip);
-  }, [selectedDevice]);
+  if (loading) return <div className="p-4 text-center">Loading devices…</div>;
 
   return (
-    <div className="p-6 w-full space-y-6">
-      <h1 className="text-3xl font-bold">Devices</h1>
+    <div className="p-6 space-y-8">
+      <h1 className="text-2xl font-bold mb-4">Devices</h1>
 
-      <div className="flex flex-col md:flex-row gap-6">
-        {/* Devices Table */}
-        <div className="flex-1 bg-card p-4 rounded shadow overflow-auto">
-          <h2 className="text-sm font-semibold text-muted-foreground mb-2">All Devices</h2>
-          <table className="min-w-full table-auto text-left border-collapse">
-            <thead>
-              <tr>
-                <th className="px-4 py-2 border-b">IP</th>
-                <th className="px-4 py-2 border-b">Type</th>
-                <th className="px-4 py-2 border-b">Status</th>
-                <th className="px-4 py-2 border-b">Last Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {devices.map((dev) => (
-                <tr
-                  key={dev.ip}
-                  className={`hover:bg-muted/10 cursor-pointer ${
-                    selectedDevice?.ip === dev.ip ? 'bg-muted/20' : ''
-                  }`}
-                  onClick={() => setSelectedDevice(dev)}
-                >
-                  <td className="px-4 py-2">{dev.ip}</td>
-                  <td className="px-4 py-2">{dev.type}</td>
-                  <td className="px-4 py-2 text-white px-2 py-1 rounded-full text-center"
-                      style={{ backgroundColor: dev.status === 'up' ? '#34d399' : '#f87171' }}>
-                    {dev.status.toUpperCase()}
+      {/* Devices Table */}
+      <div className="overflow-x-auto bg-white rounded-xl shadow">
+        <table className="min-w-full border border-gray-200">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="px-4 py-2 text-left">IP</th>
+              <th className="px-4 py-2 text-left">Hostname</th>
+              <th className="px-4 py-2 text-left">Vendor</th>
+              <th className="px-4 py-2 text-left">OS</th>
+              <th className="px-4 py-2 text-left">Status</th>
+              <th className="px-4 py-2 text-left">Last Seen</th>
+              <th className="px-4 py-2 text-left">CPU %</th>
+              <th className="px-4 py-2 text-left">Memory %</th>
+              <th className="px-4 py-2 text-left">Sessions</th>
+              <th className="px-4 py-2 text-left">Alerts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {devices.map(dev => {
+              const perf = performance[dev.device_ip];
+              const devSessions = sessions.filter(s => s.device_ip === dev.device_ip);
+              const devAlerts = alerts.filter(a => a.device_ip === dev.device_ip);
+
+              return (
+                <tr key={dev.device_ip} className="border-t hover:bg-gray-50">
+                  <td className="px-4 py-2 font-mono">{dev.device_ip}</td>
+                  <td className="px-4 py-2">{dev.hostname || '—'}</td>
+                  <td className="px-4 py-2">{dev.vendor || '—'}</td>
+                  <td className="px-4 py-2">{dev.os || dev.os_version || '—'}</td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={`px-2 py-1 rounded text-sm ${
+                        dev.status === 'up' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {dev.status}
+                    </span>
                   </td>
-                  <td className="px-4 py-2">{new Date(dev.last_updated).toLocaleString()}</td>
+                  <td className="px-4 py-2">{dev.last_seen ? new Date(dev.last_seen).toLocaleString() : 'Never'}</td>
+                  <td className="px-4 py-2">{perf ? perf.cpu_pct.toFixed(1) : '—'}</td>
+                  <td className="px-4 py-2">{perf ? perf.memory_pct.toFixed(1) : '—'}</td>
+                  <td className="px-4 py-2">{devSessions.length}</td>
+                  <td className="px-4 py-2">{devAlerts.length}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* SNMP Tools Section */}
+      <div className="bg-white p-6 rounded-xl shadow">
+        <h2 className="text-xl font-semibold mb-4">SNMP Tools</h2>
+
+        {/* SNMP GET */}
+        <div className="mb-6">
+          <h3 className="text-md font-semibold mb-2">SNMP GET</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <input
+              type="text"
+              placeholder="Device IP"
+              value={deviceIp}
+              onChange={e => setDeviceIp(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md"
+            />
+            <input
+              type="text"
+              placeholder="OID"
+              value={oid}
+              onChange={e => setOid(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md font-mono"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {commonOIDs.map(item => (
+              <button
+                key={item.oid}
+                onClick={() => setOid(item.oid)}
+                className="px-3 py-1 bg-gray-100 rounded-md hover:bg-gray-200 text-sm"
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={handleSNMPGet}
+            disabled={snmpLoading}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {snmpLoading ? 'Fetching…' : 'SNMP GET'}
+          </button>
         </div>
 
-        {/* Device Details + Charts */}
-        <div className="flex-1 flex flex-col gap-4">
-          {selectedDevice && (
-            <>
-              {/* Connected Devices */}
-              <div className="bg-card p-4 rounded shadow">
-                <h2 className="text-sm font-semibold text-muted-foreground mb-2">
-                  Connected Devices
-                </h2>
-                <ul className="space-y-1">
-                  {connectedDevices.map((c, idx) => (
-                    <li key={idx} className="flex justify-between items-center px-2 py-1 border-b">
-                      <span>{c.ip}</span>
-                      <span
-                        className={`text-white px-2 py-1 rounded-full`}
-                        style={{ backgroundColor: c.status === 'up' ? '#34d399' : '#f87171' }}
-                      >
-                        {c.status.toUpperCase()}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* CPU / Memory Chart */}
-              <div className="bg-card p-4 rounded shadow">
-                <h2 className="text-sm font-semibold text-muted-foreground mb-2">
-                  CPU & Memory Usage
-                </h2>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={performance}>
-                    <XAxis dataKey="device_ip" />
-                    <YAxis domain={[0, 100]} />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="cpu_pct" stroke="#8884d8" name="CPU %" />
-                    {performance.some((p) => p.memory_pct !== undefined) && (
-                      <Line type="monotone" dataKey="memory_pct" stroke="#82ca9d" name="Memory %" />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Traffic Chart */}
-              <div className="bg-card p-4 rounded shadow">
-                <h2 className="text-sm font-semibold text-muted-foreground mb-2">
-                  Interface Traffic
-                </h2>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={traffic}>
-                    <XAxis dataKey="interface_name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="in_bps" stroke="#82ca9d" name="In" />
-                    <Line type="monotone" dataKey="out_bps" stroke="#8884d8" name="Out" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </>
-          )}
+        {/* SNMP WALK */}
+        <div className="mb-6">
+          <h3 className="text-md font-semibold mb-2">SNMP WALK</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <input
+              type="text"
+              placeholder="Device IP"
+              value={deviceIp}
+              onChange={e => setDeviceIp(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md"
+            />
+            <input
+              type="text"
+              placeholder="OID"
+              value={oid}
+              onChange={e => setOid(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md font-mono"
+            />
+          </div>
+          <button
+            onClick={handleSNMPWalk}
+            disabled={snmpLoading}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+          >
+            {snmpLoading ? 'Walking…' : 'SNMP WALK'}
+          </button>
         </div>
+
+        {/* SNMP Results */}
+        {snmpError && (
+          <div className="bg-red-100 border border-red-300 rounded-lg p-4 mb-4 text-red-700">
+            <span className="font-medium">Error:</span> {snmpError}
+          </div>
+        )}
+
+        {snmpResult && (
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <div className="space-y-2">
+              {snmpResult.sysdescr && <div><strong>SysDescr:</strong> {snmpResult.sysdescr}</div>}
+              {snmpResult.sysobjectid && <div><strong>SysObjectID:</strong> {snmpResult.sysobjectid}</div>}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
-
-export default DevicesPage;

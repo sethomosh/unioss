@@ -1,25 +1,25 @@
 # Stage 1: builder
-FROM node:20-alpine AS builder
+FROM node:20.6.0-alpine AS builder
 WORKDIR /app
 
-# 1) accept our API_BASE as a build-arg
+# accept our API_BASE as a build-arg
 ARG VITE_API_BASE
-# 2) inject into the container env
+# inject into the container env
 ENV VITE_API_BASE=$VITE_API_BASE
 
-# Copy manifests & install
+# copy manifests & install
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --omit=dev
 
-# Copy source & build
+# copy source & build
 COPY . .
 RUN npm run build
 
 # Stage 2: serve with Nginx
-FROM nginx:stable-alpine
-# Replace the default nginx.conf with our SPA + proxy config
+FROM nginx:1.26.3-alpine
+# replace default nginx.conf with our SPA + proxy config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-# Copy built output
+# copy built output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80

@@ -1,9 +1,9 @@
 // src/components/ProtectedRoute.tsx
 import React from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Sidebar } from './Sidebar';
-import { Topbar } from './Topbar';
-import { Login } from '../pages/Login';
+import Topbar from './Topbar';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -11,8 +11,12 @@ interface ProtectedRouteProps {
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { user } = useAuth();
+  const location = useLocation();
 
-  if (!user) return <Login />;
+  // If not authenticated, redirect to /login and remember where we came from
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">

@@ -8,14 +8,18 @@ export function Performance() {
   const { data: metrics, loading: metricsLoading } = usePerformance();
   const { data: history } = usePerformanceHistory(selectedDevice);
 
-  const performanceData = history?.slice(-50).map(point => ({
-    time: new Date(point.timestamp).toLocaleTimeString(),
-    CPU: point.cpu_pct,
-    Memory: point.memory_pct
-  })) || [];
+  // TS-safe: only call slice if history is an array
+  const performanceData = Array.isArray(history)
+    ? history.slice(-50).map(point => ({
+        time: new Date(point.timestamp).toLocaleTimeString(),
+        CPU: point.cpu_pct,
+        Memory: point.memory_pct
+      }))
+    : [];
 
   return (
     <div className="w-full mx-auto px-2 md:px-4 lg:px-6 py-4 md:py-6 space-y-6">
+      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -115,37 +119,11 @@ export function Performance() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={performanceData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis 
-                  dataKey="time" 
-                  stroke="var(--muted-foreground)"
-                  fontSize={12}
-                />
-                <YAxis 
-                  stroke="var(--muted-foreground)"
-                  fontSize={12}
-                  domain={[0, 100]}
-                />
-                <Tooltip 
-                  contentStyle={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)'
-                  }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="CPU" 
-                  stroke="var(--chart-1)" 
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="Memory" 
-                  stroke="var(--chart-2)" 
-                  strokeWidth={2}
-                  dot={false}
-                />
+                <XAxis dataKey="time" stroke="var(--muted-foreground)" fontSize={12} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={12} domain={[0, 100]} />
+                <Tooltip contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }} />
+                <Line type="monotone" dataKey="CPU" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="Memory" stroke="var(--chart-2)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

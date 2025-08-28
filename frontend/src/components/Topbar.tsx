@@ -45,7 +45,7 @@ const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle })
   };
 
   return (
-    <header className="w-full h-16 border-b border-border bg-card flex items-center px-4 sticky top-0 z-20">
+    <header className="w-full h-16 border-b border-border bg-card flex items-center px-4 fixed top-0 z-20">
       <div className="flex items-center gap-3">
         {/* sidebar toggle for mobile */}
         <button

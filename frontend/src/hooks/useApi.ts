@@ -1,6 +1,6 @@
+// src/hooks/useApi.ts
 import { useState, useEffect, useCallback } from 'react';
-import { apiClient, getDashboardMetrics } from '../utils/api';
-import type { Device, Performance, Traffic, Session, Alert, HealthStatus } from '../utils/api';
+import { apiService } from '../services/apiService';
 
 interface ApiState<T> {
   data: T | null;
@@ -13,14 +13,11 @@ interface ApiHook<T> extends ApiState<T> {
 }
 
 // Generic hook factory
-function useApiHook<T>(
-  apiCall: () => Promise<T>,
-  dependencies: unknown[] = []
-): ApiHook<T> {
+function useApiHook<T>(apiCall: () => Promise<T>): ApiHook<T> {
   const [state, setState] = useState<ApiState<T>>({
     data: null,
     loading: true,
-    error: null
+    error: null,
   });
 
   const fetchData = useCallback(async () => {
@@ -29,127 +26,83 @@ function useApiHook<T>(
       const data = await apiCall();
       setState({ data, loading: false, error: null });
     } catch (error) {
-      setState({ 
-        data: null, 
-        loading: false, 
-        error: error instanceof Error ? error.message : 'An error occurred' 
+      setState({
+        data: null,
+        loading: false,
+        error: error instanceof Error ? error.message : 'An error occurred',
       });
     }
-  }, dependencies);
+  }, [apiCall]);
 
   useEffect(() => {
     fetchData();
-  }, dependencies);
+  }, [fetchData]);
 
   return {
     ...state,
-    refetch: fetchData
+    refetch: fetchData,
   };
 }
 
 // Health check hook
-export function useHealth(): ApiHook<HealthStatus> {
-  return useApiHook(() => apiClient.getHealth());
+export function useHealth() {
+  return useApiHook(() => apiService.getHealth());
 }
 
 // Device discovery hook
-export function useDevices(): ApiHook<Device[]> {
-  return useApiHook(() => apiClient.getDevices());
+export function useDevices() {
+  return useApiHook(() => apiService.getDevices());
 }
 
 // Performance metrics hook
-export function usePerformance(): ApiHook<Performance[]> {
-  return useApiHook(() => apiClient.getPerformance());
+export function usePerformance() {
+  return useApiHook(() => apiService.getPerformance());
 }
 
 // Performance history hook
-export function usePerformanceHistory(deviceIp: string): ApiHook<Performance[]> {
-  return useApiHook(
-    () => apiClient.getPerformanceHistory(deviceIp),
-    [deviceIp]
-  );
+export function usePerformanceHistory(deviceIp: string) {
+  return useApiHook(() => apiService.getPerformanceHistory(deviceIp));
 }
 
 // Traffic data hook
-export function useTraffic(): ApiHook<Traffic[]> {
-  return useApiHook(() => apiClient.getTraffic());
+export function useTraffic() {
+  return useApiHook(() => apiService.getTraffic());
 }
 
 // Traffic history hook
-export function useTrafficHistory(deviceIp: string, interfaceName: string): ApiHook<Traffic[]> {
-  return useApiHook(
-    () => apiClient.getTrafficHistory(deviceIp, interfaceName),
-    [deviceIp, interfaceName]
-  );
+export function useTrafficHistory(deviceIp: string, interfaceName: string) {
+  return useApiHook(() => apiService.getTrafficHistory(deviceIp, interfaceName));
 }
 
 // Sessions hook
-export function useSessions(): ApiHook<Session[]> {
-  return useApiHook(() => apiClient.getSessions());
+export function useSessions() {
+  return useApiHook(() => apiService.getSessions());
 }
 
 // Alerts hook
-export function useAlerts(): ApiHook<Alert[]> {
-  return useApiHook(() => apiClient.getAlerts());
+export function useAlerts() {
+  return useApiHook(() => apiService.getAlerts());
 }
 
 // Dashboard metrics hook
-export function useDashboardMetrics(): ApiHook<{
-  total_devices: number;
-  devices_up: number;
-  devices_down: number;
-  active_alerts: number;
-  avg_cpu: number;
-  total_throughput: number;
-}> {
-  return useApiHook<{
-    total_devices: number;
-    devices_up: number;
-    devices_down: number;
-    active_alerts: number;
-    avg_cpu: number;
-    total_throughput: number;
-  }>(() => getDashboardMetrics());
+export function useDashboardMetrics() {
+  return useApiHook(() => apiService.getDashboardMetrics());
 }
 
 // SNMP data hook
-export function useSNMPData(deviceIp: string, oid: string): ApiHook<{ device_ip: string; oid: string; value: string; timestamp: string }> {
-  return useApiHook(
-    () => apiClient.getSNMPData(deviceIp, oid),
-    [deviceIp, oid]
-  );
-}
-
-// Alert acknowledgment hook
-export function useAlertAcknowledgment() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const acknowledgeAlert = useCallback(async (alertId: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await apiClient.acknowledgeAlert(alertId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to acknowledge alert');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  return { acknowledgeAlert, loading, error };
+export function useSNMPData(deviceIp: string, oid: string) {
+  return useApiHook(() => apiService.getSNMPData(deviceIp, oid));
 }
 
 // Polling hook for real-time updates
 export function usePolling<T>(
   apiCall: () => Promise<T>,
-  interval: number = 30000, // 30 seconds default
-  dependencies: unknown[] = []
+  interval: number = 30000
 ): ApiHook<T> {
   const [state, setState] = useState<ApiState<T>>({
     data: null,
     loading: true,
-    error: null
+    error: null,
   });
 
   const fetchData = useCallback(async () => {
@@ -157,22 +110,21 @@ export function usePolling<T>(
       const data = await apiCall();
       setState({ data, loading: false, error: null });
     } catch (error) {
-      setState(prev => ({ 
-        ...prev, 
-        error: error instanceof Error ? error.message : 'An error occurred' 
+      setState(prev => ({
+        ...prev,
+        error: error instanceof Error ? error.message : 'An error occurred',
       }));
     }
-  }, dependencies);
+  }, [apiCall]);
 
   useEffect(() => {
-    fetchData(); // Initial fetch
-    
+    fetchData();
     const intervalId = setInterval(fetchData, interval);
     return () => clearInterval(intervalId);
-  }, dependencies);
+  }, [fetchData, interval]);
 
   return {
     ...state,
-    refetch: fetchData
+    refetch: fetchData,
   };
 }

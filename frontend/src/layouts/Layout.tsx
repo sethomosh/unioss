@@ -27,8 +27,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
       <div className="flex-1 flex flex-col">
         <Topbar title={title} onSidebarToggle={() => setCollapsed(!collapsed)} />
-        <main className="flex-1 p-4 md:p-6 overflow-auto flex justify-center">
-          <div className="w-full max-w-[1600px]">{children}</div>
+        <main className="flex-1 p-4 md:p-6 overflow-auto">
+          <div className="w-full max-w-[1600px] mx-auto">{children}</div>
         </main>
       </div>
     </div>

@@ -1,5 +1,5 @@
 // Traffic.tsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { trafficDataMock, trafficHistoryMock } from '../mocks/trafficMock';
 import { motion } from 'framer-motion';
 import {
@@ -53,33 +53,37 @@ export function Traffic(): JSX.Element {
   const trafficData = trafficDataRaw ?? trafficDataMock;
   const history = historyRaw ?? trafficHistoryMock;
 
-  // History chart data
-  const trafficHistoryData = history.slice(-50).map((point): Record<string, unknown> => {
-    const inVal = getNumberField(point, ['inbound_kbps']);
-    const outVal = getNumberField(point, ['outbound_kbps']);
-    return {
-      time: getStringField(point, ['timestamp'], new Date().toLocaleTimeString()),
-      'In (Mbps)': formatKbpsToMbps(inVal),
-      'Out (Mbps)': formatKbpsToMbps(outVal)
-    };
-  });
+  // TS-safe: only slice/map if history is array
+  const trafficHistoryData = Array.isArray(history)
+    ? history.slice(-50).map((point): Record<string, unknown> => {
+        const inVal = getNumberField(point, ['inbound_kbps']);
+        const outVal = getNumberField(point, ['outbound_kbps']);
+        return {
+          time: getStringField(point, ['timestamp'], new Date().toLocaleTimeString()),
+          'In (Mbps)': formatKbpsToMbps(inVal),
+          'Out (Mbps)': formatKbpsToMbps(outVal)
+        };
+      })
+    : [];
 
-  // Top talkers list
-  const topTalkersData = (trafficData ?? []).slice(0, 10).map((item): Record<string, unknown> => {
-    const iface = getStringField(item, ['interface_name'], 'unknown');
-    const inVal = getNumberField(item, ['inbound_kbps']);
-    const outVal = getNumberField(item, ['outbound_kbps']);
-    const deviceIp = getStringField(item, ['device_ip']);
-    return {
-      interface: iface,
-      device_ip: deviceIp,
-      'In (Mbps)': formatKbpsToMbps(inVal),
-      'Out (Mbps)': formatKbpsToMbps(outVal)
-    };
-  });
+  const topTalkersData = Array.isArray(trafficData)
+    ? trafficData.slice(0, 10).map((item): Record<string, unknown> => {
+        const iface = getStringField(item, ['interface_name'], 'unknown');
+        const inVal = getNumberField(item, ['inbound_kbps']);
+        const outVal = getNumberField(item, ['outbound_kbps']);
+        const deviceIp = getStringField(item, ['device_ip']);
+        return {
+          interface: iface,
+          device_ip: deviceIp,
+          'In (Mbps)': formatKbpsToMbps(inVal),
+          'Out (Mbps)': formatKbpsToMbps(outVal)
+        };
+      })
+    : [];
 
   return (
     <div className="w-full mx-auto px-2 md:px-4 lg:px-6 py-4 md:py-6 space-y-6">
+      {/* Header */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
         <h1 className="text-2xl font-bold font-serif mb-1">Traffic Analytics</h1>
         <p className="text-sm text-muted-foreground">Monitor network traffic and interface utilization</p>
@@ -129,7 +133,7 @@ export function Traffic(): JSX.Element {
                   </tr>
                 </thead>
                 <tbody>
-                  {(trafficData ?? []).map((t, idx) => {
+                  {trafficData.map((t, idx) => {
                     const inVal = getNumberField(t, ['inbound_kbps']);
                     const outVal = getNumberField(t, ['outbound_kbps']);
                     const errs = getNumberField(t, ['errors']);

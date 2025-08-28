@@ -1,26 +1,37 @@
+// frontend/src/types/types.ts
+
+// ---------- Device & Interfaces ----------
+export interface Interface {
+  interface_name: string;
+  description?: string;
+  status?: 'up' | 'down' | 'admin-down';
+  speed?: number;
+  duplex?: string;
+  inbound_kbps?: number;
+  outbound_kbps?: number;
+  errors?: number;
+}
+
 export interface Device {
   device_ip: string;
-  hostname: string;
-  vendor: string;
-  os: string;
-  status: 'up' | 'down' | 'unknown';
-  last_seen: string;
+  hostname?: string;
+  vendor?: string;
+  os?: string;
+  os_version?: string;
+  status?: 'up' | 'down' | 'unknown';
+  last_seen?: string;   // backend ISO string
+  lastSeen?: string;    // camelCase fallback for UI
+  description?: string;
+  authenticated_via?: string;
   interfaces?: Interface[];
 }
 
-export interface Interface {
-  interface_name: string;
-  description: string;
-  status: 'up' | 'down' | 'admin-down';
-  speed?: number;
-  duplex?: string;
-}
-
+// ---------- Performance ----------
 export interface PerformanceMetrics {
   device_ip: string;
   cpu_pct: number;
   memory_pct: number;
-  timestamp: string;
+  timestamp: string; // ISO string
 }
 
 export interface PerformanceHistory {
@@ -32,28 +43,48 @@ export interface PerformanceHistory {
   }>;
 }
 
+// ---------- Traffic ----------
+export interface TrafficRecord {
+  device_ip: string;
+  interface_name: string;
+  inbound_kbps: number;
+  outbound_kbps: number;
+  in_packets: number;
+  out_packets: number;
+  errors: number;
+  timestamp: number | string;
+}
+
 export interface TrafficData {
   device_ip: string;
   interface_name: string;
-  in_octets: number;
-  out_octets: number;
-  in_packets: number;
-  out_packets: number;
-  timestamp: string;
+  // allow both raw counters and calculated throughput
+  in_octets?: number;
+  out_octets?: number;
+  in_packets?: number;
+  out_packets?: number;
+  inbound_kbps?: number;
+  outbound_kbps?: number;
+  in_bps?: number;  // legacy fallback
+  out_bps?: number; // legacy fallback
+  timestamp?: string;
+}
+
+export interface TrafficHistoryPoint {
+  timestamp: number | string;
+  inbound_kbps?: number;
+  outbound_kbps?: number;
+  in_bps?: number;  // legacy fallback
+  out_bps?: number; // legacy fallback
 }
 
 export interface TrafficHistory {
   device_ip: string;
   interface_name: string;
-  history: Array<{
-    timestamp: string;
-    in_octets: number;
-    out_octets: number;
-    in_packets: number;
-    out_packets: number;
-  }>;
+  history: TrafficHistoryPoint[];
 }
 
+// ---------- Sessions ----------
 export interface Session {
   session_id: string;
   device_ip: string;
@@ -62,18 +93,24 @@ export interface Session {
   last_activity: string;
   protocol: string;
   status: 'active' | 'idle' | 'disconnected';
+  authenticated_via?: string;
 }
+
+// ---------- Alerts ----------
+export type AlertSeverity = 'critical' | 'warning' | 'info' | 'low' | 'medium' | 'high';
 
 export interface Alert {
   id: string;
-  device_ip: string;
-  severity: 'critical' | 'warning' | 'info';
+  device_ip?: string;
+  severity: AlertSeverity;
   message: string;
   timestamp: string;
   acknowledged: boolean;
-  category: string;
+  category?: string;
+  title?: string;
 }
 
+// ---------- SNMP / Health ----------
 export interface SNMPData {
   sysdescr?: string;
   sysobjectid?: string;
@@ -83,11 +120,10 @@ export interface SNMPData {
 export interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: string;
-  services: {
-    [service: string]: 'up' | 'down';
-  };
+  services: { [service: string]: 'up' | 'down' };
 }
 
+// ---------- Dashboard ----------
 export interface DashboardMetrics {
   total_devices: number;
   devices_up: number;
@@ -97,6 +133,7 @@ export interface DashboardMetrics {
   total_throughput: number;
 }
 
+// ---------- Misc ----------
 export interface TimeRange {
   label: string;
   value: string;
@@ -106,5 +143,5 @@ export interface TimeRange {
 export interface ApiResponse<T> {
   data: T;
   error?: string;
-  loading: boolean;
+  loading?: boolean;
 }

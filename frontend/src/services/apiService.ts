@@ -14,7 +14,7 @@ import {
 
 // API config
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-const USE_MOCK = import.meta.env.VITE_MOCK === 'true';
+const USE_MOCK = import.meta.env.VITE_MOCK === 'true'; // ✅ fixed toggle
 
 // Retry with exponential backoff
 async function exponentialBackoff<T>(

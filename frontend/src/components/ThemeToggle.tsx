@@ -8,9 +8,14 @@ export const ThemeToggle: React.FC = () => {
     try {
       const saved = localStorage.getItem(THEME_KEY);
       if (saved === 'dark' || saved === 'light') return saved;
-    } catch (e) {}
+    } catch {
+      // ignore storage errors
+    }
     // fallback to system preference
-    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    ) {
       return 'dark';
     }
     return 'light';
@@ -25,7 +30,9 @@ export const ThemeToggle: React.FC = () => {
     }
     try {
       localStorage.setItem(THEME_KEY, theme);
-    } catch (e) {}
+    } catch {
+      // ignore storage errors
+    }
   }, [theme]);
 
   useEffect(() => {
@@ -37,7 +44,9 @@ export const ThemeToggle: React.FC = () => {
         if (saved !== 'light' && saved !== 'dark') {
           setTheme(ev.matches ? 'dark' : 'light');
         }
-      } catch (e) {}
+      } catch {
+        // ignore storage errors
+      }
     };
     if (mq?.addEventListener) mq.addEventListener('change', handler);
     else if (mq?.addListener) mq.addListener(handler);
@@ -58,14 +67,44 @@ export const ThemeToggle: React.FC = () => {
     >
       {theme === 'dark' ? (
         // sun icon (light mode)
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.2" />
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden
+        >
+          <path
+            d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle
+            cx="12"
+            cy="12"
+            r="4"
+            stroke="currentColor"
+            strokeWidth="1.2"
+          />
         </svg>
       ) : (
         // moon icon (dark mode)
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden
+        >
+          <path
+            d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       )}
     </button>

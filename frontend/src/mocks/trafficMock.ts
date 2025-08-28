@@ -1,6 +1,9 @@
-import type { TrafficRecord, TrafficHistoryPoint } from '../utils/types';
+// frontend/src/mocks/trafficMock.ts
 
-export const trafficDataMock: TrafficRecord[] = [
+import type { TrafficData } from '../types/types';
+
+// mock current traffic data
+export const trafficDataMock: TrafficData[] = [
   {
     device_ip: '192.168.1.1',
     interface_name: 'GigabitEthernet0/0',
@@ -8,8 +11,7 @@ export const trafficDataMock: TrafficRecord[] = [
     outbound_kbps: 80000,
     in_packets: 12345,
     out_packets: 9876,
-    errors: 0,
-    timestamp: Date.now()
+    timestamp: new Date().toISOString()
   },
   {
     device_ip: '192.168.1.2',
@@ -18,8 +20,7 @@ export const trafficDataMock: TrafficRecord[] = [
     outbound_kbps: 70000,
     in_packets: 5432,
     out_packets: 8765,
-    errors: 2,
-    timestamp: Date.now()
+    timestamp: new Date().toISOString()
   },
   {
     device_ip: '192.168.1.3',
@@ -28,13 +29,18 @@ export const trafficDataMock: TrafficRecord[] = [
     outbound_kbps: 110000,
     in_packets: 3333,
     out_packets: 4444,
-    errors: 1,
-    timestamp: Date.now()
+    timestamp: new Date().toISOString()
   }
 ];
 
-export const trafficHistoryMock: TrafficHistoryPoint[] = Array.from({ length: 50 }).map((_, i) => ({
-  timestamp: Date.now() - (50 - i) * 1000 * 60,
+// mock traffic history data
+export const trafficHistoryMock: TrafficData[] = Array.from({ length: 50 }).map((_, i) => ({
+  device_ip: '192.168.1.1',
+  interface_name: 'GigabitEthernet0/0',
+  timestamp: new Date(Date.now() - (50 - i) * 1000 * 60).toISOString(),
   inbound_kbps: Math.floor(Math.random() * 100000),
-  outbound_kbps: Math.floor(Math.random() * 100000)
+  outbound_kbps: Math.floor(Math.random() * 100000),
+  in_packets: Math.floor(Math.random() * 5000),
+  out_packets: Math.floor(Math.random() * 5000),
+  errors: Math.floor(Math.random() * 5)
 }));

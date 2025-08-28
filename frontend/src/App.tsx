@@ -7,13 +7,9 @@ import Dashboard from './pages/Dashboard';
 import { Performance } from './pages/Performance';
 import { PerformanceHistory } from './pages/PerformanceHistory';
 import { Traffic } from './pages/Traffic';
-import { Discovery } from './pages/Discovery';
-import { Access } from './pages/Access';
-import { DeviceDetail } from './pages/DeviceDetail';
 import { AnalyticsCalendar } from './pages/AnalyticsCalendar';
 import { Login } from './pages/Login';
 import { Alerts } from './pages/Alerts';
-import { SNMPTools } from './pages/SNMPTools';
 import { Settings } from './pages/Settings';
 import './styles/theme.css';
 
@@ -37,19 +33,16 @@ function App() {
             <Route path="/login" element={<Login />} />
 
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/devices" element={<ProtectedRoute><Discovery /></ProtectedRoute>} />
-            <Route path="/devices/:ip" element={<ProtectedRoute><DeviceDetail /></ProtectedRoute>} />
 
             <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
             <Route path="/performance-history" element={<ProtectedRoute><PerformanceHistory /></ProtectedRoute>} />
 
             <Route path="/traffic" element={<ProtectedRoute><Traffic /></ProtectedRoute>} />
-            <Route path="/access" element={<ProtectedRoute><Access /></ProtectedRoute>} />
 
             <Route path="/alerts" element={<ProtectedRoute><Alerts /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute><AnalyticsCalendar /></ProtectedRoute>} />
 
-            <Route path="/tools/snmp" element={<ProtectedRoute><SNMPTools /></ProtectedRoute>} />
+
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
             <Route

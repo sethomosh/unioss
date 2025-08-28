@@ -7,19 +7,24 @@ export function PerformanceHistory() {
   const [selectedDevice, setSelectedDevice] = useState<string>('192.168.1.1');
   const { data: history } = usePerformanceHistory(selectedDevice);
 
-  const performanceData = history?.map(point => ({
-    time: new Date(point.timestamp).toLocaleString(),
-    CPU: point.cpu_pct,
-    Memory: point.memory_pct
-  })) || [];
+  // TS-safe: only map if history is an array
+  const performanceData = Array.isArray(history)
+    ? history.map(point => ({
+        time: new Date(point.timestamp).toLocaleString(),
+        CPU: point.cpu_pct,
+        Memory: point.memory_pct
+      }))
+    : [];
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
+      {/* Header */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
         <h1 className="text-3xl font-bold font-serif mb-2">Performance History</h1>
         <p className="text-muted-foreground">Historical CPU and memory trends per device</p>
       </motion.div>
 
+      {/* Device Selector */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.1 }} className="flex gap-4 items-center">
         <label className="text-sm font-medium">Select Device:</label>
         <select
@@ -33,6 +38,7 @@ export function PerformanceHistory() {
         </select>
       </motion.div>
 
+      {/* Historical Chart */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.2 }} className="bg-card border border-border rounded-lg shadow-sm">
         <div className="p-6">
           <h2 className="text-xl font-semibold mb-4">History - {selectedDevice}</h2>
@@ -53,6 +59,3 @@ export function PerformanceHistory() {
     </div>
   );
 }
-
-
-

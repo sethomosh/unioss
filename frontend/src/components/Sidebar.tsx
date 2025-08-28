@@ -26,8 +26,8 @@ export const Sidebar: React.FC<{collapsed?: boolean; onToggle?: () => void}> = (
   const toggle = () => { setIsCollapsed(!isCollapsed); onToggle?.(); };
 
   return (
-    <aside className={`flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-200
-      ${isCollapsed ? 'w-16' : 'w-72'} min-h-screen`}>
+    <aside className={`flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-200 sticky top-0
+      ${isCollapsed ? 'w-16' : 'w-72'} h-screen`}>
       
       {/* logo & toggle */}
       <div className="flex items-center justify-between p-4">
@@ -55,7 +55,6 @@ export const Sidebar: React.FC<{collapsed?: boolean; onToggle?: () => void}> = (
                 isActive ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'hover:bg-muted/10'
               }`
             }
-            aria-current={({ isActive }) => (isActive ? 'page' : undefined)}
           >
             <span className="w-5 h-5 flex-shrink-0">{item.icon(16)}</span>
             {!isCollapsed && <span className="capitalize">{item.label}</span>}

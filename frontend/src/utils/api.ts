@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { mockApi } from "../mocks/mockApi";
 
 // ---- types ----
