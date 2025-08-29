@@ -32,3 +32,11 @@ class DeviceSnapshot(BaseModel):
     os_version: Optional[str] = None
     status: Optional[str] = None
     error: Optional[str] = None
+
+class Session(BaseModel):
+    id: int
+    device_ip: str
+    user: str
+    start_time: datetime.datetime
+    end_time: Optional[datetime.datetime] = None
+    status: str

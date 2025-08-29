@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
 import { Alerts } from '../pages/Alerts';
 import { apiClient, Alert } from '../utils/api';
+import { apiService } from '../services/apiService'
 
 type TopbarProps = {
   title?: string;
@@ -38,10 +39,22 @@ const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle })
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleAcknowledge = (id: string) => {
-    setAlerts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a))
-    );
+  const handleAcknowledge = async (id: string) => {
+    // optimistic UI update: mark locally, then call backend
+    setAlerts(prev => prev.map(a => (a.id === id ? { ...a, acknowledged: true } : a)));
+
+    try {
+      const resp = await apiService.acknowledgeAlert(id);
+      if (!resp || !resp.success) {
+        // rollback if backend failed
+        console.error('Acknowledge API failed', resp);
+        setAlerts(prev => prev.map(a => (a.id === id ? { ...a, acknowledged: false } : a)));
+      }
+    } catch (err) {
+      console.error('Failed to acknowledge alert', err);
+      // rollback
+      setAlerts(prev => prev.map(a => (a.id === id ? { ...a, acknowledged: false } : a)));
+    }
   };
 
   return (

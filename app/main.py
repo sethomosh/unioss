@@ -5,6 +5,7 @@ import redis
 import json
 import time
 import random
+from app.types import Session
 from fastapi.testclient import TestClient
 from backend.modules import alerts as alerts_module
 from backend.modules.alerts import insert_alert
@@ -417,6 +418,17 @@ def bulk_insert_traffic(metrics: List[TrafficMetricIn]):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- GET endpoints ---
+@app.get("/access/sessions")
+def get_sessions():
+    try:
+        sessions = run_query("SELECT id, device_ip, user, start_time, end_time, status FROM sessions", fetch=True)
+        return sessions
+    except mysql.connector.errors.ProgrammingError as e:
+        if e.errno == 1146:
+            return []  # table doesn’t exist, return empty list
+        raise HTTPException(status_code=500, detail=f"Error fetching sessions: {e}")
+    
+
 @app.get("/performance", response_model=List[PerformanceMetricIn])
 def get_performance_metrics(limit: int = 10, offset: int = 0, min_cpu: Optional[float] = None, device_ip: Optional[str] = None, sort_by: str = "timestamp", sort_order: str = "desc"):
     allowed_sort = {"cpu_pct", "memory_pct", "uptime_seconds", "timestamp", "device_ip"}

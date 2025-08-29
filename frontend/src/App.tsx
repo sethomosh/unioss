@@ -11,6 +11,7 @@ import { AnalyticsCalendar } from './pages/AnalyticsCalendar';
 import { Login } from './pages/Login';
 import { Alerts } from './pages/Alerts';
 import { Settings } from './pages/Settings';
+import { DevicesPage } from './pages/DevicesPage';
 import './styles/theme.css';
 
 // Protected route component
@@ -33,7 +34,7 @@ function App() {
             <Route path="/login" element={<Login />} />
 
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-
+            <Route path="/devices" element={<ProtectedRoute><DevicesPage /></ProtectedRoute>} />
             <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
             <Route path="/performance-history" element={<ProtectedRoute><PerformanceHistory /></ProtectedRoute>} />
 
