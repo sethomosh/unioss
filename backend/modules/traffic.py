@@ -3,9 +3,20 @@
 import time
 import logging
 from datetime import datetime
+from fastapi import APIRouter
 from backend.utils.snmp_client import snmp_get_bulk
 
+router = APIRouter()
 logger = logging.getLogger("traffic")
+
+
+@router.get("/traffic/{device_ip}")
+def traffic_for_device(device_ip: str):
+    """
+    return traffic metrics for a single device
+    """
+    return get_traffic_metrics(device_ip)
+
 
 # SNMP OIDs
 IF_DESCR_OID = "1.3.6.1.2.1.2.2.1.2"

@@ -3,8 +3,17 @@ import logging
 import time
 from backend.utils.snmp_client import snmp_get
 from backend.utils.db import get_db_connection
+from fastapi import APIRouter
 
+
+router = APIRouter()
 logger = logging.getLogger("performance")
+
+
+
+@router.get("/performance/{device_ip}")
+def read_performance(device_ip: str):
+    return get_performance_metrics(device_ip)
 
 def get_performance_metrics(device_ip: str):
     """

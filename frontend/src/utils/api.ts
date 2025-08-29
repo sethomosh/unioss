@@ -54,6 +54,38 @@ export interface DashboardMetrics {
   total_throughput: number;
 }
 
-// ---- exports (using mockApi for frontend) ----
-export const apiClient = mockApi;
-export const getDashboardMetrics = mockApi.getDashboardMetrics.bind(mockApi);
+// ---- config ----
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+// ---- api client ----
+export const apiClient = {
+  async getRecentAlerts(limit = 10): Promise<Alert[]> {
+    const res = await fetch(`${BASE_URL}/alerts/recent?limit=${limit}`);
+    if (!res.ok) throw new Error("Failed to fetch alerts");
+    return res.json();
+  },
+
+  async getDashboardMetrics(): Promise<DashboardMetrics> {
+    return mockApi.getDashboardMetrics();
+  },
+
+  async getDevices(): Promise<Device[]> {
+    return mockApi.getDevices();
+  },
+
+  async getPerformance(deviceId: string): Promise<Performance[]> {
+    return mockApi.getPerformance(deviceId);
+  },
+
+  async getTraffic(deviceId: string): Promise<Traffic[]> {
+    return mockApi.getTraffic(deviceId);
+  },
+
+  async getSession(): Promise<Session> {
+    return mockApi.getSession();
+  },
+
+  async getHealth(): Promise<HealthStatus[]> {
+    return mockApi.getHealth();
+  },
+};

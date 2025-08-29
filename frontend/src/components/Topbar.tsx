@@ -18,7 +18,7 @@ const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle })
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
-        const data = await apiClient.getAlerts();
+        const data = await apiClient.getRecentAlerts();
         setAlerts(data);
       } catch (err) {
         console.error('Failed to fetch alerts', err);

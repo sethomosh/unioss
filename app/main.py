@@ -5,6 +5,13 @@ import redis
 import json
 import time
 import random
+from fastapi.testclient import TestClient
+from backend.modules import alerts as alerts_module
+from backend.modules.alerts import insert_alert
+from backend.utils.db import run_query
+from app.types import DeviceSnapshot 
+from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import List, Optional, Tuple
 from fastapi import BackgroundTasks
@@ -14,6 +21,7 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 import mysql.connector
+from backend.modules import performance as performance_module
 import asyncio
 from backend.modules import traffic as traffic_module
 from mysql.connector import Error, pooling
@@ -22,6 +30,8 @@ from pysnmp.hlapi import (
     ContextData, ObjectType, ObjectIdentity, getCmd
 )
 from backend.db.traffic_dao import save_traffic_metrics
+from backend.modules.discovery import get_device_inventory
+
 
 # --- logging ---
 logging.basicConfig(
@@ -31,6 +41,16 @@ logging.basicConfig(
 logger = logging.getLogger("unisys")
 
 app = FastAPI(title="Unified Network System")
+
+
+# -----------------------
+# Routers
+# -----------------------
+app.include_router(performance_module.router, prefix="", tags=["performance"])
+app.include_router(traffic_module.router, prefix="", tags=["traffic"])
+app.include_router(alerts_module.router, prefix="", tags=["alerts"])
+
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -92,10 +112,10 @@ except Exception as e:
     _mysql_pool = None
 
 
+client = TestClient(app)
+
+
 async def poll_traffic_loop():
-    """
-    continuously generate demo traffic metrics every N seconds
-    """
     devices = ["127.0.0.1"]
     interval = 10  # seconds
 
@@ -120,19 +140,17 @@ async def poll_traffic_loop():
             })
 
         try:
-            insert_traffic_metrics_bulk([TrafficMetricIn(**m) for m in metrics_payload])
+            client.post("/traffic/bulk", json=metrics_payload)
             logger.info("Inserted %d demo traffic rows", len(metrics_payload))
         except Exception as e:
             logger.error("Error inserting demo traffic: %s", e)
 
         await asyncio.sleep(interval)
 
+
 async def poll_performance_loop():
-    """
-    Continuously generate demo performance metrics every N seconds.
-    """
     devices = ["127.0.0.1"]
-    interval = 10  # seconds
+    interval = 10
     uptime_counters = {ip: 0 for ip in devices}
 
     while True:
@@ -148,14 +166,12 @@ async def poll_performance_loop():
             })
 
         try:
-            insert_performance_metrics_bulk([PerformanceMetricIn(**m) for m in metrics_payload])
+            client.post("/performance/bulk", json=metrics_payload)
             logger.info("Inserted %d demo performance rows", len(metrics_payload))
         except Exception as e:
             logger.error("Error inserting demo performance: %s", e)
 
         await asyncio.sleep(interval)
-
-
 
 
 # --- SNMP polling ---
@@ -343,35 +359,62 @@ def insert_traffic_metric(metric: TrafficMetricIn):
         raise HTTPException(status_code=500, detail=f"Inserting traffic metric failed: {e}")
     return {"status": "success", "message": "Traffic metric inserted"}
 
+# -----------------------
+# Bulk insert - performance
+# -----------------------
 @app.post("/performance/bulk")
-def insert_performance_metrics_bulk(metrics: List[PerformanceMetricIn] = Body(...)):
-    if not metrics:
-        raise HTTPException(status_code=400, detail="Empty metrics list")
+def bulk_insert_performance(metrics: List[PerformanceMetricIn]):
     query = """
         INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
         VALUES (%s, %s, %s, %s, %s)
     """
-    values = [(m.device_ip, m.cpu_pct, m.memory_pct, m.uptime_seconds, m.timestamp) for m in metrics]
-    try:
-        run_query(query, values, fetch=False, many=True, commit=True)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Bulk insert performance failed: {e}")
-    return {"status": "success", "inserted": len(values)}
+    params = [(m.device_ip, m.cpu_pct, m.memory_pct, m.uptime_seconds, m.timestamp) for m in metrics]
 
+    try:
+        run_query(query, params=params, fetch=False, commit=True, many=True)
+
+        # ---- alerts ----
+        for m in metrics:
+            try:
+                if m.cpu_pct > 90:
+                    insert_alert(m.device_ip, "critical", f"High CPU usage: {m.cpu_pct}%")
+                elif m.memory_pct > 85:
+                    insert_alert(m.device_ip, "warning", f"High memory usage: {m.memory_pct}%")
+            except Exception as e:
+                logger.error("Failed to insert alert for %s: %s", m.device_ip, e)
+
+        return {"status": "success", "inserted": len(metrics)}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -----------------------
+# Bulk insert - traffic
+# -----------------------
 @app.post("/traffic/bulk")
-def insert_traffic_metrics_bulk(metrics: List[TrafficMetricIn] = Body(...)):
-    if not metrics:
-        raise HTTPException(status_code=400, detail="Empty metrics list")
+def bulk_insert_traffic(metrics: List[TrafficMetricIn]):
     query = """
         INSERT INTO traffic_metrics (device_ip, interface_name, inbound_kbps, outbound_kbps, errors, timestamp)
         VALUES (%s, %s, %s, %s, %s, %s)
     """
-    values = [(m.device_ip, m.interface_name, m.inbound_kbps, m.outbound_kbps, m.errors, m.timestamp) for m in metrics]
+    params = [(m.device_ip, m.interface_name, m.inbound_kbps, m.outbound_kbps, m.errors, m.timestamp) for m in metrics]
+
     try:
-        run_query(query, values, fetch=False, many=True, commit=True)
+        run_query(query, params=params, fetch=False, commit=True, many=True)
+
+        # ---- alerts ----
+        for m in metrics:
+            try:
+                if m.errors > 0:
+                    insert_alert(m.device_ip, "warning", f"Interface {m.interface_name} has {m.errors} errors")
+            except Exception as e:
+                logger.error("Failed to insert alert for %s/%s: %s", m.device_ip, m.interface_name, e)
+
+        return {"status": "success", "inserted": len(metrics)}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Bulk insert traffic failed: {e}")
-    return {"status": "success", "inserted": len(values)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- GET endpoints ---
 @app.get("/performance", response_model=List[PerformanceMetricIn])
@@ -435,12 +478,26 @@ def get_device_snapshots(device_ip: Optional[str] = None, start_time: Optional[d
             p.cpu_pct,
             p.memory_pct,
             p.uptime_seconds,
-            t.interface_name,        
+            t.interface_name,
             t.inbound_kbps,
             t.outbound_kbps,
             t.errors
-        FROM performance_metrics p
-        LEFT JOIN traffic_metrics t ON p.device_ip = t.device_ip
+        FROM performance_metrics AS p
+        JOIN (
+            SELECT device_ip, MAX(timestamp) AS ts
+            FROM performance_metrics
+            GROUP BY device_ip
+        ) AS m ON p.device_ip = m.device_ip AND p.timestamp = m.ts
+        LEFT JOIN (
+            SELECT t1.device_ip, t1.interface_name, t1.inbound_kbps, t1.outbound_kbps, t1.errors
+            FROM traffic_metrics t1
+            JOIN (
+                SELECT device_ip, interface_name, MAX(timestamp) AS ts
+                FROM traffic_metrics
+                GROUP BY device_ip, interface_name
+            ) AS t2 
+            ON t1.device_ip = t2.device_ip AND t1.interface_name = t2.interface_name AND t1.timestamp = t2.ts
+        ) AS t ON p.device_ip = t.device_ip
         WHERE 1=1
     """
     params = []
@@ -544,6 +601,9 @@ def top_traffic_interfaces(limit: int = 5):
         return run_query(query, (limit,), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching top interfaces: {e}")
+
+
+
 
 # --- caching example for dashboard ---
 def cache_get(key):
@@ -699,3 +759,85 @@ def get_traffic_history(
         return run_query(query, tuple(params), fetch=True, dict_cursor=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching traffic history: {e}")
+
+
+
+# -----------------------
+# discovery
+# -----------------------
+
+
+@app.get("/discovery/devices", response_model=List[DeviceSnapshot])
+def discovery_devices():
+    try:
+        perf_devices = run_query("""
+            SELECT p.device_ip, p.cpu_pct, p.memory_pct, p.uptime_seconds, p.timestamp
+            FROM performance_metrics p
+            JOIN (
+                SELECT device_ip, MAX(timestamp) AS ts
+                FROM performance_metrics
+                GROUP BY device_ip
+            ) m ON p.device_ip = m.device_ip AND p.timestamp = m.ts
+        """, fetch=True, dict_cursor=True) or []
+
+        traffic_rows = run_query("""
+            SELECT t.device_ip, t.interface_name, t.inbound_kbps, t.outbound_kbps, t.errors
+            FROM traffic_metrics t
+            JOIN (
+                SELECT device_ip, interface_name, MAX(timestamp) AS ts
+                FROM traffic_metrics
+                GROUP BY device_ip, interface_name
+            ) m ON t.device_ip = m.device_ip AND t.interface_name = m.interface_name AND t.timestamp = m.ts
+        """, fetch=True, dict_cursor=True) or []
+
+        # get SNMP/discovery info
+        discovery_rows = get_device_inventory()  # returns list of dicts with hostname, vendor, status, etc.
+
+        now = datetime.utcnow()
+        ONLINE_THRESHOLD = 20  # seconds
+        devices = {}
+
+        for d in perf_devices:
+            ip = d["device_ip"]
+            last_seen = d.get("timestamp")
+            online = False
+            if last_seen:
+                if isinstance(last_seen, str):
+                    last_seen = datetime.fromisoformat(last_seen)
+                online = (now - last_seen).total_seconds() <= ONLINE_THRESHOLD
+
+            # find discovery info for this IP
+            snmp_info = next((x for x in discovery_rows if x["ip"] == ip), {})
+
+            devices[ip] = {
+                "device_ip": ip,
+                "cpu_pct": d.get("cpu_pct"),
+                "memory_pct": d.get("memory_pct"),
+                "uptime_seconds": d.get("uptime_seconds"),
+                "interfaces": [],
+                "online": online,
+                "hostname": snmp_info.get("hostname"),
+                "description": snmp_info.get("description"),
+                "vendor": snmp_info.get("vendor"),
+                "os_version": snmp_info.get("os_version"),
+                "status": snmp_info.get("status"),
+                "error": snmp_info.get("error")
+            }
+
+        for row in traffic_rows:
+            ip = row.get("device_ip")
+            if ip in devices:
+                devices[ip]["interfaces"].append({
+                    "interface_name": row.get("interface_name", ""),
+                    "inbound_kbps": row.get("inbound_kbps", 0),
+                    "outbound_kbps": row.get("outbound_kbps", 0),
+                    "errors": row.get("errors", 0)
+                })
+
+        return list(devices.values())
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": f"Error fetching devices: {e}"})
+
+
+

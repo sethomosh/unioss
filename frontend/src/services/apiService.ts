@@ -159,10 +159,11 @@ export const apiService = {
   },
 
   // Alerts
-  async getAlerts(): Promise<Alert[]> {
-    return USE_MOCK ? mockData.alerts : apiRequest<Alert[]>('/alerts');
+  async getAlerts(limit = 100): Promise<Alert[]> {
+    if (USE_MOCK) return mockData.alerts;
+    // backend exposes /alerts/recent — use it
+    return apiRequest<Alert[]>(`/alerts/recent?limit=${encodeURIComponent(String(limit))}`);
   },
-
   async acknowledgeAlert(alertId: string): Promise<{ success: boolean }> {
     if (USE_MOCK) {
       const alert = mockData.alerts.find(a => a.id === alertId);

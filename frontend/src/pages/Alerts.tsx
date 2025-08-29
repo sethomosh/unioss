@@ -33,7 +33,10 @@ export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowled
     const load = async () => {
       setLoading(true);
       try {
-        const res = await fetch('/api/alerts').then(r => r.json()); // adjust API endpoint
+        const res = await fetch('/api/alerts/recent?limit=5').then(r => {
+          if (!r.ok) throw new Error(`Alerts fetch failed: ${r.status}`);
+          return r.json();
+        });
         if (!mounted) return;
         setAlerts(res);
       } catch (err) {
