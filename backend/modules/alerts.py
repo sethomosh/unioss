@@ -6,10 +6,10 @@ from fastapi import APIRouter, HTTPException
 from ..utils.db import run_query
 
 logger = logging.getLogger("unisys.alerts")
-router = APIRouter()
+router = APIRouter()   # no prefix here — main.py provides prefix
 
 # --- GET recent alerts ---
-@router.get("/alerts/recent", response_model=List[dict])
+@router.get("/recent", response_model=List[dict])
 def get_recent_alerts(limit: int = 5):
     query = """
         SELECT id, device_ip, severity, message, timestamp,
@@ -41,8 +41,7 @@ def insert_alert(device_ip: str, severity: str, message: str, category: str = No
     params = (device_ip, severity, message, datetime.datetime.utcnow(), category)
     try:
         logger.info("insert_alert called: device_ip=%s severity=%s message=%s category=%s", device_ip, severity, message, category)
-        # note: fetch=False, commit=True. Many DB wrappers return rowcount here.
-        run_query(query, params=params, fetch=False, commit=True, dict_cursor=True)
+        run_query(query, params=params, fetch=False, commit=True)
         logger.info("insert_alert succeeded for %s", device_ip)
         return True
     except Exception as e:
@@ -50,13 +49,12 @@ def insert_alert(device_ip: str, severity: str, message: str, category: str = No
         return False
     
 # --- Acknowledge endpoint (POST) ---
-@router.post("/alerts/{alert_id}/acknowledge")
+@router.post("/{alert_id}/acknowledge")
 def acknowledge_alert(alert_id: int):
     """
     Mark an alert as acknowledged.
     """
     try:
-        # Ensure alert exists
         rows = run_query("SELECT id, acknowledged FROM alerts WHERE id=%s", (alert_id,), fetch=True, dict_cursor=True) or []
         if not rows:
             raise HTTPException(status_code=404, detail="Alert not found")

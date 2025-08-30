@@ -1,3 +1,4 @@
+// src/layouts/Layout.tsx - Fixed spacing and alignment issues
 import React, { useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -23,12 +24,20 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           .join(' ') || 'Dashboard';
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-      <div className="flex-1 flex flex-col">
-        <Topbar title={title} onSidebarToggle={() => setCollapsed(!collapsed)} />
-        <main className="flex-1 p-4 md:p-6 overflow-auto">
-          <div className="w-full max-w-[1600px] mx-auto">{children}</div>
+    <div className="min-h-screen w-full bg-background text-foreground flex flex-col">
+      {/* Fixed topbar at very top */}
+      <Topbar title={title} onSidebarToggle={() => setCollapsed(!collapsed)} />
+      
+      {/* Main layout container below topbar */}
+      <div className="flex flex-1 mt-16"> {/* mt-16 pushes content below fixed topbar */}
+        {/* Sidebar */}
+        <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+        
+        {/* Main content area */}
+        <main className="flex-1 overflow-auto bg-background">
+          <div className="w-full p-6">
+            {children}
+          </div>
         </main>
       </div>
     </div>

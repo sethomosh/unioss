@@ -1,4 +1,4 @@
-// src/components/Topbar.tsx
+// src/components/Topbar.tsx - Fixed alignment and styling
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
@@ -58,11 +58,12 @@ const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle })
   };
 
   return (
-    <header className="w-full h-16 border-b border-border bg-card flex items-center px-4 fixed top-0 z-20">
-      <div className="flex items-center gap-3">
-        {/* sidebar toggle for mobile */}
+    <header className="w-full h-16 border-b border-border bg-card/95 backdrop-blur-sm flex items-center justify-between px-6 fixed top-0 left-0 right-0 z-30 shadow-sm">
+      {/* Left section - Logo */}
+      <div className="flex items-center gap-4">
+        {/* Mobile sidebar toggle */}
         <button
-          className="p-2 rounded md:hidden hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="p-2 rounded-md lg:hidden hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
           onClick={onSidebarToggle}
           aria-label="Toggle sidebar"
         >
@@ -71,47 +72,52 @@ const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle })
           </svg>
         </button>
 
-        <Link to="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded flex items-center justify-center text-white font-bold text-base">
+        {/* Logo on far left */}
+        <Link to="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm shadow-sm">
+            U
+          </div>
+          <div className="text-lg font-bold tracking-wide text-foreground">
             UNIOSS
           </div>
         </Link>
-
-        <div className="text-sm font-semibold tracking-wide capitalize text-foreground truncate">{title}</div>
       </div>
 
-      <div className="flex-1" />
+      {/* Right section - Controls */}
+      <div className="flex items-center gap-3">
+        {/* Notifications on far right */}
+        <div className="relative">
+          <button
+            aria-label="notifications"
+            title="notifications"
+            className="relative p-2 rounded-md hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+            onClick={() => setShowDropdown(!showDropdown)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M15 17H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path
+                d="M12 3C9.239 3 7 5.239 7 8V11C7 12.93 6.32 14.68 5.222 15.828L4 17.2C3.447 17.82 4.018 18.75 4.78 18.75H19.22C19.982 18.75 20.553 17.82 20 17.2L18.778 15.828C17.68 14.68 17 12.93 17 11V8C17 5.239 14.761 3 12 3Z"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+              />
+            </svg>
+            {alerts.length > 0 && (
+              <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] text-xs font-bold text-destructive-foreground bg-destructive rounded-full px-1">
+                {alerts.filter(a => !a.acknowledged).length}
+              </span>
+            )}
+          </button>
 
-      <div className="relative flex items-center gap-3">
-        <button
-          aria-label="notifications"
-          title="notifications"
-          className="relative p-2 rounded-md hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring"
-          onClick={() => setShowDropdown(!showDropdown)}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M15 17H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <path
-              d="M12 3C9.239 3 7 5.239 7 8V11C7 12.93 6.32 14.68 5.222 15.828L4 17.2C3.447 17.82 4.018 18.75 4.78 18.75H19.22C19.982 18.75 20.553 17.82 20 17.2L18.778 15.828C17.68 14.68 17 12.93 17 11V8C17 5.239 14.761 3 12 3Z"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-            />
-          </svg>
-          {alerts.length > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-medium leading-none text-card bg-destructive rounded-full">
-              {alerts.filter(a => !a.acknowledged).length}
-            </span>
+          {/* Dropdown */}
+          {showDropdown && (
+            <div ref={dropdownRef} className="absolute right-0 top-full mt-2 z-50">
+              <Alerts alerts={alerts} onAcknowledge={handleAcknowledge} />
+            </div>
           )}
-        </button>
+        </div>
 
-        {/* dropdown */}
-        {showDropdown && (
-          <div ref={dropdownRef} className="absolute right-0 mt-2 z-50">
-            <Alerts alerts={alerts} onAcknowledge={handleAcknowledge} />
-          </div>
-        )}
-
+        {/* Theme toggle on far right */}
         <ThemeToggle />
       </div>
     </header>

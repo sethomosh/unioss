@@ -51,9 +51,9 @@ app = FastAPI(title="Unified Network System")
 # -----------------------
 # Routers
 # -----------------------
-app.include_router(performance_module.router, prefix="", tags=["performance"])
-app.include_router(traffic_module.router, prefix="", tags=["traffic"])
-app.include_router(alerts_module.router, prefix="", tags=["alerts"])
+app.include_router(performance_module.router, prefix="/api/performance", tags=["performance"])
+app.include_router(traffic_module.router, prefix="/api/traffic", tags=["traffic"])
+app.include_router(alerts_module.router, prefix="/api/alerts", tags=["alerts"])
 
 
 @app.on_event("startup")
@@ -80,13 +80,15 @@ async def startup_event():
 
 
 origins = [
-    "http://localhost:5173",  # your frontend dev server
-    "http://127.0.0.1:5173",  # optional: in case frontend uses 127.0.0.1
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -176,9 +178,9 @@ async def _poll_devices(devices: list, interval: int = 10):
         # --- insert to API endpoints ---
         try:
             if perf_payload:
-                client.post("/performance/bulk", json=perf_payload)
+                client.post("/api/performance/bulk", json=perf_payload)
             if traffic_payload:
-                client.post("/traffic/bulk", json=traffic_payload)
+                client.post("/api/traffic/bulk", json=traffic_payload)
             logger.info("Inserted demo metrics: %d perf, %d traffic", len(perf_payload), len(traffic_payload))
         except Exception as e:
             logger.error("Error inserting demo metrics: %s", e)
@@ -243,7 +245,7 @@ async def poll_traffic_loop():
             })
 
         try:
-            client.post("/traffic/bulk", json=metrics_payload)
+            client.post("/api/traffic/bulk", json=metrics_payload)
             logger.info("Inserted %d demo traffic rows", len(metrics_payload))
         except Exception as e:
             logger.error("Error inserting demo traffic: %s", e)
@@ -269,7 +271,7 @@ async def poll_performance_loop():
             })
 
         try:
-            client.post("/performance/bulk", json=metrics_payload)
+            client.post("/api/performance/bulk", json=metrics_payload)
             logger.info("Inserted %d demo performance rows", len(metrics_payload))
         except Exception as e:
             logger.error("Error inserting demo performance: %s", e)
@@ -381,11 +383,11 @@ if __name__ == "__main__":
 #             pass
 
 # --- health ---
-@app.get("/")
+@app.get("/api/")
 def root():
     return {"message": "Unified Network System is running..."}
 
-@app.get("/health")
+@app.get("/api/health")
 def health_check():
     db_ok, redis_ok = True, True
     try:
@@ -438,7 +440,7 @@ class DeviceDashboard(BaseModel):
     traffic_trend: List[InterfaceTrend] = []
 
 # --- POST endpoints ---
-@app.post("/performance")
+@app.post("/api/performance")
 def insert_performance_metric(metric: PerformanceMetricIn):
     query = """
         INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
@@ -450,7 +452,7 @@ def insert_performance_metric(metric: PerformanceMetricIn):
         raise HTTPException(status_code=500, detail=f"Inserting performance metric failed: {e}")
     return {"status": "success", "message": "Performance metric inserted"}
 
-@app.post("/traffic")
+@app.post("/api/traffic")
 def insert_traffic_metric(metric: TrafficMetricIn):
     query = """
         INSERT INTO traffic_metrics (device_ip, interface_name, inbound_kbps, outbound_kbps, errors, timestamp)
@@ -465,7 +467,7 @@ def insert_traffic_metric(metric: TrafficMetricIn):
 # -----------------------
 # Bulk insert - performance
 # -----------------------
-@app.post("/performance/bulk")
+@app.post("/api/performance/bulk")
 def bulk_insert_performance(metrics: List[PerformanceMetricIn]):
     query = """
         INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
@@ -495,7 +497,7 @@ def bulk_insert_performance(metrics: List[PerformanceMetricIn]):
 # -----------------------
 # Bulk insert - traffic
 # -----------------------
-@app.post("/traffic/bulk")
+@app.post("/api/traffic/bulk")
 def bulk_insert_traffic(metrics: List[TrafficMetricIn]):
     query = """
         INSERT INTO traffic_metrics (device_ip, interface_name, inbound_kbps, outbound_kbps, errors, timestamp)
@@ -520,7 +522,7 @@ def bulk_insert_traffic(metrics: List[TrafficMetricIn]):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- GET endpoints ---
-@app.get("/access/sessions")
+@app.get("/api/access/sessions")
 def get_sessions():
     try:
         sessions = run_query("SELECT id, device_ip, user, start_time, end_time, status FROM sessions", fetch=True)
@@ -531,7 +533,7 @@ def get_sessions():
         raise HTTPException(status_code=500, detail=f"Error fetching sessions: {e}")
     
 
-@app.get("/performance", response_model=List[PerformanceMetricIn])
+@app.get("/api/performance", response_model=List[PerformanceMetricIn])
 def get_performance_metrics(limit: int = 10, offset: int = 0, min_cpu: Optional[float] = None, device_ip: Optional[str] = None, sort_by: str = "timestamp", sort_order: str = "desc"):
     allowed_sort = {"cpu_pct", "memory_pct", "uptime_seconds", "timestamp", "device_ip"}
     if sort_by not in allowed_sort:
@@ -553,7 +555,7 @@ def get_performance_metrics(limit: int = 10, offset: int = 0, min_cpu: Optional[
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching performance metrics: {e}")
 
-@app.get("/traffic", response_model=List[TrafficMetricIn])
+@app.get("/api/traffic", response_model=List[TrafficMetricIn])
 def get_traffic_metrics(limit: int = 10, offset: int = 0, min_errors: Optional[int] = None, device_ip: Optional[str] = None, sort_by: str = "timestamp", sort_order: str = "desc"):
     allowed_sort = {"inbound_kbps", "outbound_kbps", "errors", "timestamp", "device_ip", "interface_name"}
     if sort_by not in allowed_sort:
@@ -576,7 +578,7 @@ def get_traffic_metrics(limit: int = 10, offset: int = 0, min_errors: Optional[i
         raise HTTPException(status_code=500, detail=f"Error fetching traffic metrics: {e}")
 
 # --- devices and dashboard endpoints ---
-@app.get("/devices", response_model=List[DeviceSnapshot])
+@app.get("/api/devices", response_model=List[DeviceSnapshot])
 def get_device_snapshots(device_ip: Optional[str] = None, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
                          min_cpu: Optional[float] = None, min_errors: Optional[int] = None, limit: int = 10, offset: int = 0,
                          sort_by: str = "device_ip", sort_order: str = "asc"):
@@ -660,7 +662,7 @@ def get_device_snapshots(device_ip: Optional[str] = None, start_time: Optional[d
     return list(devices.values())
 
 # --- aggregations (top cpu/memory/errors) ---
-@app.get("/performance/top-cpu")
+@app.get("/api/performance/top-cpu")
 def top_cpu_devices(limit: int = 5):
     query = """
         SELECT device_ip, MAX(cpu_pct) AS max_cpu
@@ -674,7 +676,7 @@ def top_cpu_devices(limit: int = 5):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching top cpu devices: {e}")
 
-@app.get("/performance/top-memory")
+@app.get("/api/performance/top-memory")
 def top_memory_devices(limit: int = 5):
     query = """
         SELECT device_ip, MAX(memory_pct) AS max_memory
@@ -688,7 +690,7 @@ def top_memory_devices(limit: int = 5):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching top memory devices: {e}")
 
-@app.get("/traffic/errors-summary")
+@app.get("/api/traffic/errors-summary")
 def traffic_errors_summary(min_errors: int = 1):
     query = """
         SELECT device_ip, SUM(errors) AS total_errors, COUNT(*) AS interfaces_with_errors
@@ -702,7 +704,7 @@ def traffic_errors_summary(min_errors: int = 1):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching traffic errors summary: {e}")
 
-@app.get("/traffic/top-interfaces")
+@app.get("/api/traffic/top-interfaces")
 def top_traffic_interfaces(limit: int = 5):
     query = """
         SELECT device_ip, interface_name, SUM(inbound_kbps) AS total_inbound, SUM(outbound_kbps) AS total_outbound
@@ -733,7 +735,7 @@ def cache_set(key, value, ttl=CACHE_TTL):
         return
     redis_client.set(key, json.dumps(value, default=str), ex=ttl)
 
-@app.get("/dashboard/{device_ip}", response_model=DeviceDashboard)
+@app.get("/api/dashboard/{device_ip}", response_model=DeviceDashboard)
 def get_device_dashboard(device_ip: str):
     cached = cache_get(f"dashboard:{device_ip}")
     if cached:
@@ -761,7 +763,7 @@ def get_device_dashboard(device_ip: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching dashboard: {e}")
 
-@app.get("/traffic/device/{device_ip}/recent")
+@app.get("/api/traffic/device/{device_ip}/recent")
 def get_device_recent_traffic(device_ip: str, limit: int = 0):
     """
     Return recent traffic metrics for device_ip.
@@ -809,7 +811,7 @@ def get_device_recent_traffic(device_ip: str, limit: int = 0):
 # -----------------------
 # PERFORMANCE HISTORY
 # -----------------------
-@app.get("/performance/history")
+@app.get("/api/performance/history")
 def get_performance_history(
     device_ip: Optional[str] = Query(None, description="Filter by device IP"),
     limit: int = Query(100, ge=1, le=1000),
@@ -841,7 +843,7 @@ def get_performance_history(
 # -----------------------
 # TRAFFIC HISTORY
 # -----------------------
-@app.get("/traffic/history")
+@app.get("/api/traffic/history")
 def get_traffic_history(
     device_ip: Optional[str] = Query(None, description="Filter by device IP"),
     interface_name: Optional[str] = Query(None, description="Filter by interface name"),
@@ -881,7 +883,7 @@ def get_traffic_history(
 # -----------------------
 
 
-@app.get("/discovery/devices", response_model=List[DeviceSnapshot])
+@app.get("/api/discovery/devices", response_model=List[DeviceSnapshot])
 def discovery_devices():
     try:
         perf_devices = run_query(
@@ -999,7 +1001,7 @@ def discovery_devices():
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": f"Error fetching devices: {e}"})
 
-@app.get("/devices/{device_ip}/details")
+@app.get("/api/devices/{device_ip}/details")
 def device_details(
     device_ip: str = Path(..., description="Device IP to fetch details for"),
     start: Optional[datetime] = Query(None, description="Start time (ISO) to filter history"),

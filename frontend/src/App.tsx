@@ -13,7 +13,8 @@ import { Alerts } from './pages/Alerts';
 import { Settings } from './pages/Settings';
 import { DevicesPage } from './pages/DevicesPage';
 import { DeviceDetailsPage } from './pages/DeviceDetailsPage';
-import './styles/theme.css';
+import './styles/styles.css';
+
 
 // Protected route component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
