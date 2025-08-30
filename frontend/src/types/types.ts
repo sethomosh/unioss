@@ -145,3 +145,34 @@ export interface ApiResponse<T> {
   error?: string;
   loading?: boolean;
 }
+
+export type PerfHistoryEntry = {
+  timestamp: string; // ISO
+  cpu_pct: number | null;
+  memory_pct: number | null;
+};
+
+export type TrafficHistoryEntry = {
+  timestamp: string; // ISO
+  interface_name: string;
+  inbound_kbps: number;
+  outbound_kbps: number;
+  errors: number;
+};
+
+export type IfRow = {
+  device_ip: string;
+  interface_name: string;
+  inbound_kbps: number;
+  outbound_kbps: number;
+  errors: number;
+  timestamp?: string;
+};
+
+export type DeviceDetailsResponse = {
+  device_ip: string;
+  snapshot: { cpu_pct?: number; memory_pct?: number; uptime_seconds?: number; timestamp?: string } | null;
+  latest_per_interface: IfRow[];
+  performance_history: PerfHistoryEntry[];
+  traffic_history: TrafficHistoryEntry[];
+};

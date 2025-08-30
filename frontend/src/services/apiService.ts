@@ -209,4 +209,43 @@ export const apiService = {
     }
     return apiRequest<DashboardMetrics>('/dashboard/metrics');
   },
+  async getDeviceDetails(deviceIp: string, params?: Record<string, any>) {
+    if (USE_MOCK) {
+      const device = mockData.devices.find(d => d.device_ip === deviceIp);
+      return device ? {
+        device_ip: device.device_ip,
+        snapshot: {
+          cpu_pct: Math.random() * 100,
+          memory_pct: Math.random() * 100,
+          uptime_seconds: Math.floor(Math.random() * 100000),
+          timestamp: new Date().toISOString(),
+        },
+        latest_per_interface: device.interfaces.map(i => ({
+          device_ip: device.device_ip,
+          interface_name: i.interface_name,
+          inbound_kbps: Math.random() * 1000,
+          outbound_kbps: Math.random() * 1000,
+          errors: Math.floor(Math.random() * 3),
+          timestamp: new Date().toISOString(),
+        })),
+        performance_history: [...Array(24)].map((_, idx) => ({
+          timestamp: new Date(Date.now() - idx * 3600000).toISOString(),
+          cpu_pct: Math.random() * 100,
+          memory_pct: Math.random() * 100,
+        })),
+        traffic_history: [...Array(24)].map((_, idx) => ({
+          timestamp: new Date(Date.now() - idx * 3600000).toISOString(),
+          interface_name: device.interfaces[0].interface_name,
+          inbound_kbps: Math.random() * 1000,
+          outbound_kbps: Math.random() * 1000,
+          errors: Math.floor(Math.random() * 3),
+        })),
+      } : null;
+    }
+
+    const encoded = encodeURIComponent(deviceIp);
+    const resp = await fetch(`${API_BASE}/devices/${encoded}/details`);
+    if (!resp.ok) throw new Error(`Failed to fetch device details: ${resp.statusText}`);
+    return resp.json();
+  },
 };

@@ -5,33 +5,38 @@ import redis
 import json
 import time
 import random
-from app.types import Session
-from fastapi.testclient import TestClient
-from backend.modules import alerts as alerts_module
-from backend.modules.alerts import insert_alert
-from backend.utils.db import run_query
-from app.types import DeviceSnapshot 
-from pydantic import BaseModel
-from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import List, Optional, Tuple
-from fastapi import BackgroundTasks
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException, Body
-from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel, Field
-import mysql.connector
-from backend.modules import performance as performance_module
+from fastapi import Path
 import asyncio
-from backend.modules import traffic as traffic_module
+import mysql.connector
 from mysql.connector import Error, pooling
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field
+
+# shared models (single source of truth)
+from app.types import DeviceSnapshot, InterfaceSnapshot, Session
+
+# DB helper from utils (prefer single source of truth)
+from backend.utils.db import run_query
+
+# backend modules
+from backend.modules import alerts as alerts_module
+from backend.modules.alerts import insert_alert
+from backend.modules import performance as performance_module
+from backend.modules import traffic as traffic_module
+from backend.db.traffic_dao import save_traffic_metrics
+from backend.modules.discovery import get_device_inventory
+
+# SNMP helper
 from pysnmp.hlapi import (
     SnmpEngine, CommunityData, UdpTransportTarget,
     ContextData, ObjectType, ObjectIdentity, getCmd
 )
-from backend.db.traffic_dao import save_traffic_metrics
-from backend.modules.discovery import get_device_inventory
 
 
 # --- logging ---
@@ -43,7 +48,6 @@ logger = logging.getLogger("unisys")
 
 app = FastAPI(title="Unified Network System")
 
-
 # -----------------------
 # Routers
 # -----------------------
@@ -52,12 +56,27 @@ app.include_router(traffic_module.router, prefix="", tags=["traffic"])
 app.include_router(alerts_module.router, prefix="", tags=["alerts"])
 
 
-
 @app.on_event("startup")
 async def startup_event():
-    # run traffic poller in background
-    asyncio.create_task(poll_traffic_loop())
-    asyncio.create_task(poll_performance_loop())
+    """
+    Run background pollers on startup:
+      - demo metrics for localhost
+      - real SNMP devices if configured
+    """
+    # demo localhost devices
+    asyncio.create_task(_poll_devices(["127.0.0.1"], interval=10))
+
+    # example SNMP devices list (can be dynamic/configured)
+    snmp_devices_env = os.getenv("UNISYS_SNMP_DEVICES", "192.168.1.10,192.168.1.11")
+    snmp_devices = [x.strip() for x in snmp_devices_env.split(",") if x.strip()]
+    if snmp_devices:
+        asyncio.create_task(
+            poll_snmp_devices(
+                snmp_devices,
+                interval=int(os.getenv("UNISYS_SNMP_INTERVAL", "30")),
+                community=os.getenv("UNISYS_SNMP_COMMUNITY", "public")
+            )
+        )
 
 
 origins = [
@@ -67,7 +86,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,7 +116,8 @@ except Exception as e:
     logger.warning("Redis not available/connected: %s", e)
     redis_client = None
 
-# --- initialize mysql connection pool ---
+# --- initialize mysql connection pool (optional local pool) ---
+# NOTE: If you prefer a single DB layer, keep run_query in backend.utils.db and remove the pool below.
 POOL_NAME = "unisys_pool"
 POOL_SIZE = int(os.getenv("UNISYS_DB_POOL_SIZE", 5))
 _mysql_pool = None
@@ -109,11 +129,93 @@ try:
     )
     logger.info("MySQL connection pool created (size=%s)", POOL_SIZE)
 except Exception as e:
-    logger.warning("Could not create MySQL pool: %s. Falling back to direct connect.", e)
+    logger.warning("Could not create MySQL pool: %s. Falling back to backend.utils.db", e)
     _mysql_pool = None
 
 
 client = TestClient(app)
+
+# -----------------------
+# async device polling
+# -----------------------
+
+async def _poll_devices(devices: list, interval: int = 10):
+    """
+    Generic device poller for SNMP or demo.
+    Sends bulk inserts to performance and traffic endpoints.
+    """
+    uptime_counters = {ip: 0 for ip in devices}
+
+    while True:
+        perf_payload = []
+        traffic_payload = []
+
+        for ip in devices:
+            uptime_counters[ip] += interval
+
+            # --- performance (demo/random) ---
+            perf_payload.append({
+                "device_ip": ip,
+                "cpu_pct": round(random.uniform(5, 95), 2),
+                "memory_pct": round(random.uniform(10, 90), 2),
+                "uptime_seconds": uptime_counters[ip],
+                "timestamp": datetime.utcnow()
+            })
+
+            # --- traffic (demo/random) ---
+            for iface in ["eth0", "eth1"]:
+                traffic_payload.append({
+                    "device_ip": ip,
+                    "interface_name": iface,
+                    "inbound_kbps": round(random.uniform(100, 1200), 2),
+                    "outbound_kbps": round(random.uniform(50, 900), 2),
+                    "errors": random.randint(0, 5),
+                    "timestamp": datetime.utcnow()
+                })
+
+        # --- insert to API endpoints ---
+        try:
+            if perf_payload:
+                client.post("/performance/bulk", json=perf_payload)
+            if traffic_payload:
+                client.post("/traffic/bulk", json=traffic_payload)
+            logger.info("Inserted demo metrics: %d perf, %d traffic", len(perf_payload), len(traffic_payload))
+        except Exception as e:
+            logger.error("Error inserting demo metrics: %s", e)
+
+        await asyncio.sleep(interval)
+
+
+async def poll_snmp_devices(devices: list, interval: int = 10, community: str = "public"):
+    """
+    Poll actual SNMP devices and save results.
+    """
+    while True:
+        for ip in devices:
+            try:
+                # call the SNMP helper (RENAMED to avoid collision with endpoint)
+                traffic_metrics = snmp_get_traffic_metrics(ip, community, "1.3.6.1.2.1.2.2.1")
+                if traffic_metrics:
+                    rows = [{
+                        "device_ip": ip,
+                        "if_index": 1,
+                        "if_descr": "eth0",
+                        "inbound_kbps": float(traffic_metrics.get("inOctets", 0)),
+                        "outbound_kbps": float(traffic_metrics.get("outOctets", 0)),
+                        "in_errors": int(traffic_metrics.get("inErrors", 0)),
+                        "out_errors": int(traffic_metrics.get("outErrors", 0)),
+                        "last_updated": int(time.time())
+                    }]
+                    # save via DAO (should be safe)
+                    save_traffic_metrics(rows)
+                    logger.info("Saved SNMP traffic for %s", ip)
+
+                # TODO: add SNMP CPU/memory polling if needed
+
+            except Exception as e:
+                logger.error("SNMP poll failed for %s: %s", ip, e)
+
+        await asyncio.sleep(interval)
 
 
 async def poll_traffic_loop():
@@ -175,8 +277,12 @@ async def poll_performance_loop():
         await asyncio.sleep(interval)
 
 
-# --- SNMP polling ---
-def get_traffic_metrics(device_ip, community, oid):
+# --- SNMP polling helper (RENAMED) ---
+def snmp_get_traffic_metrics(device_ip, community, oid):
+    """
+    SNMP helper — renamed to avoid colliding with the /traffic endpoint name.
+    Returns a dict of OID -> value (strings).
+    """
     iterator = getCmd(
         SnmpEngine(),
         CommunityData(community),
@@ -200,8 +306,9 @@ def get_traffic_metrics(device_ip, community, oid):
             metrics[str(varBind[0])] = str(varBind[1])
         return metrics
 
+
 def poll_device(device_ip, community, oid):
-    metrics = get_traffic_metrics(device_ip, community, oid)
+    metrics = snmp_get_traffic_metrics(device_ip, community, oid)
     if metrics:
         logger.info("Polled %s -> %s", device_ip, metrics)
         rows = [{
@@ -219,6 +326,7 @@ def poll_device(device_ip, community, oid):
     else:
         logger.warning("No metrics returned for %s", device_ip)
 
+
 if __name__ == "__main__":
     device_ip = "127.0.0.1"
     community = "public"
@@ -227,45 +335,50 @@ if __name__ == "__main__":
         poll_device(device_ip, community, oid)
         time.sleep(10)
 
-# --- database helpers ---
-def get_db_connection():
-    try:
-        if _mysql_pool:
-            return _mysql_pool.get_connection()
-        return mysql.connector.connect(**{k: v for k, v in DB_CONFIG.items() if v is not None})
-    except Error as e:
-        logger.exception("Database connection error")
-        raise HTTPException(status_code=500, detail=f"Database connection error: {e}")
+# -----------------------
+# NOTE: we prefer a single run_query implementation in backend.utils.db.
+# If you still want the local helper, uncomment the implementations below,
+# but by default they are commented to avoid shadowing the imported run_query.
+# -----------------------
 
-def run_query(query: str, params: Tuple = (), fetch: bool = True, many: bool = False, commit: bool = False, dict_cursor: bool = True):
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=dict_cursor)
-        if many:
-            cursor.executemany(query, params)
-        else:
-            cursor.execute(query, params)
-        if commit:
-            conn.commit()
-        if fetch:
-            return cursor.fetchall()
-        return cursor.rowcount
-    except Error as e:
-        logger.exception("Database query error: %s -- params=%s", e, params)
-        raise
-    finally:
-        try:
-            if cursor:
-                cursor.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
+# def get_db_connection():
+#     try:
+#         if _mysql_pool:
+#             return _mysql_pool.get_connection()
+#         return mysql.connector.connect(**{k: v for k, v in DB_CONFIG.items() if v is not None})
+#     except Error as e:
+#         logger.exception("Database connection error")
+#         raise HTTPException(status_code=500, detail=f"Database connection error: {e}")
+#
+# def run_query_local(query: str, params: Tuple = (), fetch: bool = True, many: bool = False, commit: bool = False, dict_cursor: bool = True):
+#     conn = None
+#     cursor = None
+#     try:
+#         conn = get_db_connection()
+#         cursor = conn.cursor(dictionary=dict_cursor)
+#         if many:
+#             cursor.executemany(query, params)
+#         else:
+#             cursor.execute(query, params)
+#         if commit:
+#             conn.commit()
+#         if fetch:
+#             return cursor.fetchall()
+#         return cursor.rowcount
+#     except Error as e:
+#         logger.exception("Database query error: %s -- params=%s", e, params)
+#         raise
+#     finally:
+#         try:
+#             if cursor:
+#                 cursor.close()
+#         except Exception:
+#             pass
+#         try:
+#             if conn:
+#                 conn.close()
+#         except Exception:
+#             pass
 
 # --- health ---
 @app.get("/")
@@ -276,6 +389,7 @@ def root():
 def health_check():
     db_ok, redis_ok = True, True
     try:
+        # uses backend.utils.db.run_query
         run_query("SELECT 1", fetch=False)
     except Exception:
         db_ok = False
@@ -288,7 +402,8 @@ def health_check():
         redis_ok = False
     return {"status": {"db": "ok" if db_ok else "down", "redis": "ok" if redis_ok else "down"}}
 
-# --- Pydantic models ---
+
+# --- Pydantic models for API (left here as DTOs) ---
 class PerformanceMetricIn(BaseModel):
     device_ip: str
     cpu_pct: float
@@ -304,19 +419,6 @@ class TrafficMetricIn(BaseModel):
     errors: int
     timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
-class InterfaceSnapshot(BaseModel):
-    interface_name: str
-    inbound_kbps: float
-    outbound_kbps: float
-    errors: int
-
-class DeviceSnapshot(BaseModel):
-    device_ip: str
-    cpu_pct: float
-    memory_pct: float
-    uptime_seconds: float
-    interfaces: List[InterfaceSnapshot] = []
-
 class InterfaceTrend(BaseModel):
     timestamp: datetime
     inbound_kbps: float
@@ -327,11 +429,11 @@ class DeviceDashboard(BaseModel):
     cpu_pct: Optional[float]
     memory_pct: Optional[float]
     uptime_seconds: Optional[float]
-    avg_cpu: Optional[float]
-    avg_memory: Optional[float]
-    total_inbound: int
-    total_outbound: int
-    total_errors: int
+    avg_cpu: Optional[float] = None
+    avg_memory: Optional[float] = None
+    total_inbound: int = 0
+    total_outbound: int = 0
+    total_errors: int = 0
     top_interfaces: List[dict] = []
     traffic_trend: List[InterfaceTrend] = []
 
@@ -782,7 +884,8 @@ def get_traffic_history(
 @app.get("/discovery/devices", response_model=List[DeviceSnapshot])
 def discovery_devices():
     try:
-        perf_devices = run_query("""
+        perf_devices = run_query(
+            """
             SELECT p.device_ip, p.cpu_pct, p.memory_pct, p.uptime_seconds, p.timestamp
             FROM performance_metrics p
             JOIN (
@@ -790,9 +893,13 @@ def discovery_devices():
                 FROM performance_metrics
                 GROUP BY device_ip
             ) m ON p.device_ip = m.device_ip AND p.timestamp = m.ts
-        """, fetch=True, dict_cursor=True) or []
+            """,
+            fetch=True,
+            dict_cursor=True
+        ) or []
 
-        traffic_rows = run_query("""
+        traffic_rows = run_query(
+            """
             SELECT t.device_ip, t.interface_name, t.inbound_kbps, t.outbound_kbps, t.errors
             FROM traffic_metrics t
             JOIN (
@@ -800,26 +907,31 @@ def discovery_devices():
                 FROM traffic_metrics
                 GROUP BY device_ip, interface_name
             ) m ON t.device_ip = m.device_ip AND t.interface_name = m.interface_name AND t.timestamp = m.ts
-        """, fetch=True, dict_cursor=True) or []
+            """,
+            fetch=True,
+            dict_cursor=True
+        ) or []
 
-        # get SNMP/discovery info
-        discovery_rows = get_device_inventory()  # returns list of dicts with hostname, vendor, status, etc.
+        discovery_rows = get_device_inventory() or []  # ensure this returns list[dict] with key "ip"
 
         now = datetime.utcnow()
-        ONLINE_THRESHOLD = 20  # seconds
+        ONLINE_THRESHOLD = int(os.getenv("UNISYS_ONLINE_THRESHOLD", "20"))  # seconds, make configurable
+
         devices = {}
 
+        # First populate devices from latest perf rows
         for d in perf_devices:
             ip = d["device_ip"]
             last_seen = d.get("timestamp")
             online = False
             if last_seen:
-                if isinstance(last_seen, str):
-                    last_seen = datetime.fromisoformat(last_seen)
-                online = (now - last_seen).total_seconds() <= ONLINE_THRESHOLD
+                try:
+                    last_seen_dt = datetime.fromisoformat(last_seen) if isinstance(last_seen, str) else last_seen
+                    online = (now - last_seen_dt).total_seconds() <= ONLINE_THRESHOLD
+                except Exception:
+                    online = False
 
-            # find discovery info for this IP
-            snmp_info = next((x for x in discovery_rows if x["ip"] == ip), {})
+            snmp_info = next((x for x in discovery_rows if x.get("ip") == ip), {})
 
             devices[ip] = {
                 "device_ip": ip,
@@ -836,6 +948,42 @@ def discovery_devices():
                 "error": snmp_info.get("error")
             }
 
+        # Add discovered-only devices (no perf rows)
+        for disc in discovery_rows:
+            ip = disc.get("ip")
+            if not ip or ip in devices:
+                continue
+
+            # determine online from discovery's last_seen or status
+            online = False
+            last_seen = disc.get("last_seen") or disc.get("timestamp")
+            if last_seen:
+                try:
+                    last_seen_dt = datetime.fromisoformat(last_seen) if isinstance(last_seen, str) else last_seen
+                    online = (now - last_seen_dt).total_seconds() <= ONLINE_THRESHOLD
+                except Exception:
+                    online = False
+            else:
+                status = disc.get("status")
+                if status is not None:
+                    online = str(status).lower() in ("up", "online", "true")
+
+            devices[ip] = {
+                "device_ip": ip,
+                "cpu_pct": None,
+                "memory_pct": None,
+                "uptime_seconds": None,
+                "interfaces": [],
+                "online": online,
+                "hostname": disc.get("hostname"),
+                "description": disc.get("description"),
+                "vendor": disc.get("vendor"),
+                "os_version": disc.get("os_version"),
+                "status": disc.get("status"),
+                "error": disc.get("error")
+            }
+
+        # Attach traffic interface info
         for row in traffic_rows:
             ip = row.get("device_ip")
             if ip in devices:
@@ -851,5 +999,98 @@ def discovery_devices():
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": f"Error fetching devices: {e}"})
 
+@app.get("/devices/{device_ip}/details")
+def device_details(
+    device_ip: str = Path(..., description="Device IP to fetch details for"),
+    start: Optional[datetime] = Query(None, description="Start time (ISO) to filter history"),
+    end: Optional[datetime] = Query(None, description="End time (ISO) to filter history"),
+    perf_limit: int = Query(200, ge=1, le=5000, description="Max performance rows to return"),
+    traffic_limit: int = Query(200, ge=1, le=5000, description="Max traffic rows to return"),
+    interface: Optional[str] = Query(None, description="Filter traffic by interface name"),
+):
+    """
+    Combined device details payload for the frontend:
+      - snapshot: latest perf row (cpu/memory/uptime)
+      - performance_history: ordered DESC by timestamp (limited)
+      - traffic_history: ordered DESC by timestamp (limited, optional interface filter)
+    """
+    try:
+        # --- snapshot (latest perf row) ---
+        snap_q = """
+            SELECT cpu_pct, memory_pct, uptime_seconds, timestamp
+            FROM performance_metrics
+            WHERE device_ip = %s
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        snap_rows = run_query(snap_q, (device_ip,), fetch=True, dict_cursor=True) or []
+        snapshot = snap_rows[0] if snap_rows else None
+
+        # --- performance history ---
+        perf_q = """
+            SELECT timestamp, cpu_pct, memory_pct
+            FROM performance_metrics
+            WHERE device_ip = %s
+        """
+        perf_params: List = [device_ip]
+        if start:
+            perf_q += " AND timestamp >= %s"
+            perf_params.append(start)
+        if end:
+            perf_q += " AND timestamp <= %s"
+            perf_params.append(end)
+        perf_q += " ORDER BY timestamp DESC LIMIT %s"
+        perf_params.append(perf_limit)
+        perf_history = run_query(perf_q, tuple(perf_params), fetch=True, dict_cursor=True) or []
+
+        # --- traffic history ---
+        traffic_q = """
+            SELECT timestamp, interface_name, inbound_kbps, outbound_kbps, errors
+            FROM traffic_metrics
+            WHERE device_ip = %s
+        """
+        traffic_params: List = [device_ip]
+        if interface:
+            traffic_q += " AND interface_name = %s"
+            traffic_params.append(interface)
+        if start:
+            traffic_q += " AND timestamp >= %s"
+            traffic_params.append(start)
+        if end:
+            traffic_q += " AND timestamp <= %s"
+            traffic_params.append(end)
+        traffic_q += " ORDER BY timestamp DESC LIMIT %s"
+        traffic_params.append(traffic_limit)
+        traffic_history = run_query(traffic_q, tuple(traffic_params), fetch=True, dict_cursor=True) or []
+
+        # --- optionally include latest per-interface rows (useful for overview) ---
+        latest_if_rows = run_query(
+            """
+            SELECT t.device_ip, t.interface_name, t.inbound_kbps, t.outbound_kbps, t.errors, t.timestamp
+            FROM traffic_metrics t
+            JOIN (
+                SELECT interface_name, MAX(timestamp) AS ts
+                FROM traffic_metrics
+                WHERE device_ip = %s
+                GROUP BY interface_name
+            ) m ON t.interface_name = m.interface_name AND t.timestamp = m.ts
+            WHERE t.device_ip = %s
+            """,
+            (device_ip, device_ip),
+            fetch=True,
+            dict_cursor=True
+        ) or []
+
+        return {
+            "device_ip": device_ip,
+            "snapshot": snapshot,
+            "latest_per_interface": latest_if_rows,
+            "performance_history": perf_history,
+            "traffic_history": traffic_history,
+        }
+
+    except Exception as e:
+        logger.exception("Error building device details for %s", device_ip)
+        raise HTTPException(status_code=500, detail=f"Error fetching device details: {e}")
 
 

@@ -1,5 +1,4 @@
-# backend/app/types.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import datetime
 
@@ -22,7 +21,7 @@ class DeviceSnapshot(BaseModel):
     cpu_pct: Optional[float] = None
     memory_pct: Optional[float] = None
     uptime_seconds: Optional[int] = None
-    interfaces: List[InterfaceSnapshot] = []
+    interfaces: List[InterfaceSnapshot] = Field(default_factory=list)
     online: Optional[bool] = None
 
     # SNMP / discovery fields

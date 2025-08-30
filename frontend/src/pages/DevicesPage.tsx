@@ -1,7 +1,7 @@
-// src/pages/DevicesPage.tsx
 import React, { useEffect, useState } from 'react';
 import { apiService } from '../services/apiService';
 import { Device, PerformanceMetrics, Session, Alert, SNMPData } from '../types/types';
+import { Link } from 'react-router-dom';
 
 export const DevicesPage: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -25,7 +25,6 @@ export const DevicesPage: React.FC = () => {
     { name: 'SysLocation', oid: '1.3.6.1.2.1.1.6.0' },
   ];
 
-  // SNMP handlers
   const handleSNMPGet = async () => {
     setSnmpLoading(true);
     setSnmpError(null);
@@ -62,16 +61,16 @@ export const DevicesPage: React.FC = () => {
           apiService.getAlerts(),
         ]);
 
-        setDevices(devs);
-        setSessions(sess);
+        setDevices(devs || []);
+        setSessions(sess || []);
 
         const perfMap: Record<string, PerformanceMetrics> = {};
-        perf.forEach(p => {
+        (perf || []).forEach(p => {
           if (p.device_ip) perfMap[p.device_ip] = p;
         });
         setPerformance(perfMap);
 
-        setAlerts(al);
+        setAlerts(al || []);
       } catch (err) {
         console.error('Error loading device data:', err);
       } finally {
@@ -102,6 +101,7 @@ export const DevicesPage: React.FC = () => {
               <th className="px-4 py-2 text-left">CPU %</th>
               <th className="px-4 py-2 text-left">Memory %</th>
               <th className="px-4 py-2 text-left">Sessions</th>
+              <th className="px-4 py-2 text-left">Details</th>
               <th className="px-4 py-2 text-left">Alerts</th>
             </tr>
           </thead>
@@ -110,6 +110,8 @@ export const DevicesPage: React.FC = () => {
               const perf = performance[dev.device_ip];
               const devSessions = sessions.filter(s => s.device_ip === dev.device_ip);
               const devAlerts = alerts.filter(a => a.device_ip === dev.device_ip);
+
+              const lastSeen = dev.last_seen ?? dev.lastSeen ?? 'Never';
 
               return (
                 <tr key={dev.device_ip} className="border-t hover:bg-gray-50">
@@ -123,13 +125,21 @@ export const DevicesPage: React.FC = () => {
                         dev.status === 'up' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                       }`}
                     >
-                      {dev.status}
+                      {dev.status || 'unknown'}
                     </span>
                   </td>
-                  <td className="px-4 py-2">{dev.last_seen ? new Date(dev.last_seen).toLocaleString() : 'Never'}</td>
+                  <td className="px-4 py-2">{new Date(lastSeen).toLocaleString()}</td>
                   <td className="px-4 py-2">{perf ? perf.cpu_pct.toFixed(1) : '—'}</td>
                   <td className="px-4 py-2">{perf ? perf.memory_pct.toFixed(1) : '—'}</td>
                   <td className="px-4 py-2">{devSessions.length}</td>
+                  <td className="px-4 py-2">
+                    <Link
+                      to={`/devices/${encodeURIComponent(dev.device_ip)}`}
+                      className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                    >
+                      Details
+                    </Link>
+                  </td>
                   <td className="px-4 py-2">{devAlerts.length}</td>
                 </tr>
               );
@@ -138,7 +148,7 @@ export const DevicesPage: React.FC = () => {
         </table>
       </div>
 
-      {/* SNMP Tools Section */}
+      {/* SNMP Tools */}
       <div className="bg-white p-6 rounded-xl shadow">
         <h2 className="text-xl font-semibold mb-4">SNMP Tools</h2>
 
@@ -209,19 +219,13 @@ export const DevicesPage: React.FC = () => {
           </button>
         </div>
 
-        {/* SNMP Results */}
-        {snmpError && (
-          <div className="bg-red-100 border border-red-300 rounded-lg p-4 mb-4 text-red-700">
-            <span className="font-medium">Error:</span> {snmpError}
-          </div>
-        )}
+        {snmpError && <div className="bg-red-100 border border-red-300 rounded-lg p-4 mb-4 text-red-700">{snmpError}</div>}
 
         {snmpResult && (
           <div className="bg-gray-50 p-4 rounded-lg">
-            <div className="space-y-2">
-              {snmpResult.sysdescr && <div><strong>SysDescr:</strong> {snmpResult.sysdescr}</div>}
-              {snmpResult.sysobjectid && <div><strong>SysObjectID:</strong> {snmpResult.sysobjectid}</div>}
-            </div>
+            {Object.entries(snmpResult).map(([k, v]) => (
+              <div key={k}><strong>{k}:</strong> {String(v)}</div>
+            ))}
           </div>
         )}
       </div>
