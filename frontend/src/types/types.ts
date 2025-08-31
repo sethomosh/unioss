@@ -20,10 +20,14 @@ export interface Device {
   os_version?: string;
   status?: 'up' | 'down' | 'unknown';
   last_seen?: string;   // backend ISO string
-  lastSeen?: string;    // camelCase fallback for UI
   description?: string;
   authenticated_via?: string;
   interfaces?: Interface[];
+  uptime_seconds?: number;
+  online?: boolean;
+  error?: string;
+  cpu_pct?: number;      
+  memory_pct?: number;   
 }
 
 // ---------- Performance ----------

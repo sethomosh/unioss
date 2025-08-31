@@ -111,7 +111,12 @@ export const DevicesPage: React.FC = () => {
               const devSessions = sessions.filter(s => s.device_ip === dev.device_ip);
               const devAlerts = alerts.filter(a => a.device_ip === dev.device_ip);
 
-              const lastSeen = dev.last_seen ?? dev.lastSeen ?? 'Never';
+              const rawLastSeen = dev.last_seen ?? dev.lastSeen ?? null;
+              let lastSeenStr = '—';
+              if (rawLastSeen) {
+                const d = new Date(rawLastSeen);
+                lastSeenStr = !isNaN(+d) ? d.toLocaleString() : '—';
+              }
 
               return (
                 <tr key={dev.device_ip} className="border-t hover:bg-gray-50">
@@ -122,13 +127,17 @@ export const DevicesPage: React.FC = () => {
                   <td className="px-4 py-2">
                     <span
                       className={`px-2 py-1 rounded text-sm ${
-                        dev.status === 'up' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        dev.status === 'up'
+                          ? 'bg-green-100 text-green-700'
+                          : dev.status === 'unknown'
+                            ? 'bg-gray-100 text-gray-700'
+                            : 'bg-red-100 text-red-700'
                       }`}
                     >
                       {dev.status || 'unknown'}
                     </span>
                   </td>
-                  <td className="px-4 py-2">{new Date(lastSeen).toLocaleString()}</td>
+                  <td className="px-4 py-2">{lastSeenStr}</td>
                   <td className="px-4 py-2">{perf ? perf.cpu_pct.toFixed(1) : '—'}</td>
                   <td className="px-4 py-2">{perf ? perf.memory_pct.toFixed(1) : '—'}</td>
                   <td className="px-4 py-2">{devSessions.length}</td>
@@ -222,10 +231,24 @@ export const DevicesPage: React.FC = () => {
         {snmpError && <div className="bg-red-100 border border-red-300 rounded-lg p-4 mb-4 text-red-700">{snmpError}</div>}
 
         {snmpResult && (
-          <div className="bg-gray-50 p-4 rounded-lg">
-            {Object.entries(snmpResult).map(([k, v]) => (
-              <div key={k}><strong>{k}:</strong> {String(v)}</div>
-            ))}
+          <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+            {Array.isArray(snmpResult) ? (
+              snmpResult.map((entry, idx) => (
+                <div key={idx} className="p-2 border-b border-gray-200">
+                  {Object.entries(entry).map(([k, v]) => (
+                    <div key={k}>
+                      <strong>{k}:</strong> {String(v)}
+                    </div>
+                  ))}
+                </div>
+              ))
+            ) : (
+              Object.entries(snmpResult).map(([k, v]) => (
+                <div key={k}>
+                  <strong>{k}:</strong> {String(v)}
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>

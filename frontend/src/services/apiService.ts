@@ -14,7 +14,7 @@ import {
 
 // API config
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-const USE_MOCK = import.meta.env.VITE_MOCK === 'true'; // ✅ fixed toggle
+const USE_MOCK = import.meta.env.VITE_MOCK === 'true';
 
 // Retry with exponential backoff
 async function exponentialBackoff<T>(
@@ -61,6 +61,8 @@ const mockData = {
       os: 'IOS-XE',
       status: 'up',
       last_seen: new Date().toISOString(),
+      cpu_pct: 45,
+      memory_pct: 65,
       interfaces: [
         { interface_name: 'GigabitEthernet0/0', description: 'WAN Link', status: 'up', speed: 1000, duplex: 'full' },
         { interface_name: 'GigabitEthernet0/1', description: 'LAN Core', status: 'up', speed: 1000, duplex: 'full' },
@@ -73,6 +75,8 @@ const mockData = {
       os: 'JunOS',
       status: 'up',
       last_seen: new Date().toISOString(),
+      cpu_pct: 25,
+      memory_pct: 40,
       interfaces: [
         { interface_name: 'ge-0/0/0', description: 'Uplink to Core', status: 'up', speed: 1000, duplex: 'full' },
         { interface_name: 'ge-0/0/1', description: 'Access Port 1', status: 'up', speed: 100, duplex: 'full' },
@@ -105,16 +109,38 @@ const mockData = {
   } as HealthStatus,
 };
 
+// Normalizer to unify backend payloads
+function normalizeDevice(d: any): Device {
+  return {
+    ...d,
+    os: d.os ?? d.os_version ?? '—',
+    hostname: d.hostname ?? '—',
+    vendor: d.vendor ?? '—',
+    status: d.status ?? (d.online != null ? (d.online ? 'up' : 'down') : 'unknown'),
+    last_seen: d.last_seen && !isNaN(Date.parse(d.last_seen))
+      ? d.last_seen
+      : (d.timestamp && !isNaN(Date.parse(d.timestamp)) ? d.timestamp : null),
+    cpu_pct: d.cpu_pct ?? null,
+    memory_pct: d.memory_pct ?? null,
+  };
+}
+
 // API service
 export const apiService = {
   // Devices
   async getDevices(): Promise<Device[]> {
-    return USE_MOCK ? mockData.devices : apiRequest<Device[]>('/discovery/devices');
+    if (USE_MOCK) return mockData.devices.map(normalizeDevice);
+    const raw = await apiRequest<Device[]>('/discovery/devices');
+    return raw.map(normalizeDevice);
   },
 
   async getDeviceByIp(ip: string): Promise<Device | null> {
-    if (USE_MOCK) return mockData.devices.find(d => d.device_ip === ip) || null;
-    return apiRequest<Device>(`/discovery/devices/${ip}`);
+    if (USE_MOCK) {
+      const dev = mockData.devices.find(d => d.device_ip === ip);
+      return dev ? normalizeDevice(dev) : null;
+    }
+    const d = await apiRequest<Device>(`/discovery/devices/${ip}`);
+    return normalizeDevice(d);
   },
 
   // Performance
@@ -161,9 +187,9 @@ export const apiService = {
   // Alerts
   async getAlerts(limit = 100): Promise<Alert[]> {
     if (USE_MOCK) return mockData.alerts;
-    // backend exposes /alerts/recent — use it
     return apiRequest<Alert[]>(`/alerts/recent?limit=${encodeURIComponent(String(limit))}`);
   },
+
   async acknowledgeAlert(alertId: string): Promise<{ success: boolean }> {
     if (USE_MOCK) {
       const alert = mockData.alerts.find(a => a.id === alertId);
@@ -180,16 +206,12 @@ export const apiService = {
 
   // SNMP
   async getSNMPData(deviceIp: string, oid: string): Promise<SNMPData> {
-    if (USE_MOCK) {
-      return { sysdescr: `Mock SNMP response for ${oid}`, sysobjectid: oid };
-    }
+    if (USE_MOCK) return { sysdescr: `Mock SNMP response for ${oid}`, sysobjectid: oid };
     return apiRequest<SNMPData>(`/snmp/get?device_ip=${deviceIp}&oid=${oid}`);
   },
 
   async walkSNMP(deviceIp: string, oid: string): Promise<SNMPData> {
-    if (USE_MOCK) {
-      return { sysobjectid: oid, sysdescr: 'Mock SNMP walk data' };
-    }
+    if (USE_MOCK) return { sysobjectid: oid, sysdescr: 'Mock SNMP walk data' };
     return apiRequest<SNMPData>(`/snmp/walk?device_ip=${deviceIp}&oid=${oid}`);
   },
 
@@ -209,7 +231,8 @@ export const apiService = {
     }
     return apiRequest<DashboardMetrics>('/dashboard/metrics');
   },
-  async getDeviceDetails(deviceIp: string, params?: Record<string, any>) {
+
+  async getDeviceDetails(deviceIp: string) {
     if (USE_MOCK) {
       const device = mockData.devices.find(d => d.device_ip === deviceIp);
       return device ? {
