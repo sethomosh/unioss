@@ -37,7 +37,18 @@ from pysnmp.hlapi import (
     SnmpEngine, CommunityData, UdpTransportTarget,
     ContextData, ObjectType, ObjectIdentity, getCmd
 )
-
+# helper: ensure datetimes become ISO strings for the frontend
+def _format_ts_for_client(ts):
+    if not ts:
+        return None
+    try:
+        # MySQL connector often returns datetime objects; convert to ISO string
+        if isinstance(ts, datetime):
+            return ts.isoformat() + "Z"
+        # if it's already a string, try to return it unchanged
+        return str(ts)
+    except Exception:
+        return None
 
 # --- logging ---
 logging.basicConfig(
@@ -525,11 +536,36 @@ def bulk_insert_traffic(metrics: List[TrafficMetricIn]):
 @app.get("/api/access/sessions")
 def get_sessions():
     try:
-        sessions = run_query("SELECT id, device_ip, user, start_time, end_time, status FROM sessions", fetch=True)
-        return sessions
+        # align with access module DB table name and contract
+        rows = run_query(
+            """
+            SELECT
+              user,
+              ip AS device_ip,
+              mac,
+              login_time,
+              logout_time,
+              duration_seconds AS duration,
+              authenticated_via
+            FROM access_sessions
+            ORDER BY login_time DESC
+            """,
+            fetch=True,
+            dict_cursor=True
+        ) or []
+
+        # normalize datetime to ISO strings for frontend
+        for r in rows:
+            if r.get("login_time"):
+                r["login_time"] = _format_ts_for_client(r["login_time"])
+            if r.get("logout_time"):
+                r["logout_time"] = _format_ts_for_client(r["logout_time"])
+        return rows
     except mysql.connector.errors.ProgrammingError as e:
         if e.errno == 1146:
-            return []  # table doesn’t exist, return empty list
+            return []  # table doesn’t exist
+        raise HTTPException(status_code=500, detail=f"Error fetching sessions: {e}")
+    except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching sessions: {e}")
     
 
@@ -917,7 +953,7 @@ def discovery_devices():
         discovery_rows = get_device_inventory() or []  # ensure this returns list[dict] with key "ip"
 
         now = datetime.utcnow()
-        ONLINE_THRESHOLD = int(os.getenv("UNISYS_ONLINE_THRESHOLD", "20"))  # seconds, make configurable
+        ONLINE_THRESHOLD = int(os.getenv("UNISYS_ONLINE_THRESHOLD", "120"))  # seconds, make configurable
 
         devices = {}
 
@@ -933,7 +969,31 @@ def discovery_devices():
                 except Exception:
                     online = False
 
-            snmp_info = next((x for x in discovery_rows if x.get("ip") == ip), {})
+            # SNMP discovery rows might use "ip" or "device_ip" depending on implementation.
+            snmp_info = next((x for x in discovery_rows if x.get("ip") == ip or x.get("device_ip") == ip), None)
+
+            # prefer status from SNMP discovery info if available, otherwise use online heuristic
+            inferred_status = None
+            if isinstance(snmp_info, dict):
+                inferred_status = snmp_info.get("status") or (snmp_info.get("online") and ("up" if snmp_info.get("online") else None))
+            if not inferred_status:
+                inferred_status = "up" if online else "down"
+
+            # format timestamp from performance row for the client
+            last_seen_str = _format_ts_for_client(last_seen)
+
+            # build hostname/desc/vendor/os by checking many fallbacks (discovery may use different keys)
+            hostname = None
+            description = None
+            vendor_val = None
+            os_version_val = None
+            error_val = None
+            if isinstance(snmp_info, dict):
+                hostname = snmp_info.get("hostname") or snmp_info.get("db_hostname") or snmp_info.get("name")
+                description = snmp_info.get("description") or snmp_info.get("db_description")
+                vendor_val = snmp_info.get("vendor")
+                os_version_val = snmp_info.get("os_version") or snmp_info.get("os")
+                error_val = snmp_info.get("error")
 
             devices[ip] = {
                 "device_ip": ip,
@@ -942,17 +1002,21 @@ def discovery_devices():
                 "uptime_seconds": d.get("uptime_seconds"),
                 "interfaces": [],
                 "online": online,
-                "hostname": snmp_info.get("hostname"),
-                "description": snmp_info.get("description"),
-                "vendor": snmp_info.get("vendor"),
-                "os_version": snmp_info.get("os_version"),
-                "status": snmp_info.get("status"),
-                "error": snmp_info.get("error")
+                "last_seen": last_seen_str,
+                # only set discovery values if present; otherwise leave None (frontend shows —)
+                "hostname": hostname,
+                "description": description,
+                "vendor": vendor_val,
+                "os_version": os_version_val,
+                "status": inferred_status,
+                "error": error_val
             }
 
+            
         # Add discovered-only devices (no perf rows)
         for disc in discovery_rows:
-            ip = disc.get("ip")
+            # accept either key name
+            ip = disc.get("ip") or disc.get("device_ip")
             if not ip or ip in devices:
                 continue
 
@@ -970,6 +1034,13 @@ def discovery_devices():
                 if status is not None:
                     online = str(status).lower() in ("up", "online", "true")
 
+            # format last_seen from discovery rows (if available)
+            last_seen_raw = disc.get("last_seen") or disc.get("timestamp")
+            last_seen_str = _format_ts_for_client(last_seen_raw)
+
+            # prefer the explicit status from discovery if present, otherwise infer from online boolean
+            inferred_status = disc.get("status") or ("up" if online else "down")
+
             devices[ip] = {
                 "device_ip": ip,
                 "cpu_pct": None,
@@ -977,14 +1048,14 @@ def discovery_devices():
                 "uptime_seconds": None,
                 "interfaces": [],
                 "online": online,
-                "hostname": disc.get("hostname"),
+                "last_seen": last_seen_str,
+                "hostname": disc.get("hostname") or disc.get("name"),
                 "description": disc.get("description"),
                 "vendor": disc.get("vendor"),
-                "os_version": disc.get("os_version"),
-                "status": disc.get("status"),
+                "os_version": disc.get("os_version") or disc.get("os"),
+                "status": inferred_status,
                 "error": disc.get("error")
             }
-
         # Attach traffic interface info
         for row in traffic_rows:
             ip = row.get("device_ip")
