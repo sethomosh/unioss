@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 import logging
-import time
+from datetime import datetime
 from backend.utils.snmp_client import snmp_get
 from backend.utils.db import get_db_connection
 from fastapi import APIRouter
-
 
 router = APIRouter()
 logger = logging.getLogger("performance")
 
 
-
 @router.get("/performance/{device_ip}")
 def read_performance(device_ip: str):
     return get_performance_metrics(device_ip)
+
 
 def get_performance_metrics(device_ip: str):
     """
@@ -35,21 +34,24 @@ def get_performance_metrics(device_ip: str):
             except Exception:
                 return default
 
+        # FIXED: use uptime_seconds to match DB schema (was previously uptime_secs / mismatch)
         row = {
             "device_ip": device_ip,
             "cpu_pct": safe_cast(cpu, float),
             "memory_pct": safe_cast(mem, float),
-            "uptime_secs": safe_cast(uptime, int),
+            "uptime_seconds": safe_cast(uptime, int),
         }
 
         conn = get_db_connection()
         cur = conn.cursor()
+
+        # FIXED: placeholders count must match params (was 4 placeholders but 5 params)
         cur.execute(
             """
-            INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_secs)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (row["device_ip"], row["cpu_pct"], row["memory_pct"], row["uptime_secs"]),
+            (row["device_ip"], row["cpu_pct"], row["memory_pct"], row["uptime_seconds"], datetime.utcnow()),
         )
         conn.commit()
         cur.close()

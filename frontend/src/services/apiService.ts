@@ -1,5 +1,4 @@
 // src/services/apiService.ts
-// ready to replace file — changes marked with `// change:` comments
 
 import {
   Device,
