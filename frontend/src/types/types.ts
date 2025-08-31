@@ -96,8 +96,9 @@ export interface Session {
   start_time: string;
   last_activity: string;
   protocol: string;
-  status: 'active' | 'idle' | 'disconnected';
+  status: 'active' | 'idle' | 'disconnected' | string;
   authenticated_via?: string;
+  duration?: number | null; 
 }
 
 // ---------- Alerts ----------

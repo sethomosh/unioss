@@ -1,3 +1,5 @@
+// src/pages/DevicesPage.tsx
+
 import React, { useEffect, useState } from 'react';
 import { apiService } from '../services/apiService';
 import { Device, PerformanceMetrics, Session, Alert, SNMPData } from '../types/types';
@@ -81,6 +83,14 @@ export const DevicesPage: React.FC = () => {
     loadData();
   }, []);
 
+  // helper: get latest session for device_ip
+  const getLatestSessionForDevice = (ip: string): Session | null => {
+    const ds = sessions.filter(s => s.device_ip === ip && s.start_time);
+    if (ds.length === 0) return null;
+    ds.sort((a, b) => (b.start_time || '').localeCompare(a.start_time || ''));
+    return ds[0];
+  };
+
   if (loading) return <div className="p-4 text-center">Loading devices…</div>;
 
   return (
@@ -101,6 +111,12 @@ export const DevicesPage: React.FC = () => {
               <th className="px-4 py-2 text-left">CPU %</th>
               <th className="px-4 py-2 text-left">Memory %</th>
               <th className="px-4 py-2 text-left">Sessions</th>
+
+              {/* change: split the last-auth into three clearer columns */}
+              <th className="px-4 py-2 text-left">last auth</th>
+              <th className="px-4 py-2 text-left">auth user</th>
+              <th className="px-4 py-2 text-left">auth time</th>
+
               <th className="px-4 py-2 text-left">Details</th>
               <th className="px-4 py-2 text-left">Alerts</th>
             </tr>
@@ -117,6 +133,12 @@ export const DevicesPage: React.FC = () => {
                 const d = new Date(rawLastSeen);
                 lastSeenStr = !isNaN(+d) ? d.toLocaleString() : '—';
               }
+              const latest = getLatestSessionForDevice(dev.device_ip);
+
+              // change: break out method/user/time separately for easier layout and readability
+              const lastAuthMethod = latest?.authenticated_via ?? '—';
+              const lastAuthUser = latest?.username ?? '—';
+              const lastAuthTime = latest?.start_time ? new Date(latest.start_time).toLocaleString() : '—';
 
               return (
                 <tr key={dev.device_ip} className="border-t hover:bg-gray-50">
@@ -138,9 +160,27 @@ export const DevicesPage: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-4 py-2">{lastSeenStr}</td>
-                  <td className="px-4 py-2">{perf ? perf.cpu_pct.toFixed(1) : '—'}</td>
-                  <td className="px-4 py-2">{perf ? perf.memory_pct.toFixed(1) : '—'}</td>
+                  <td className="px-4 py-2">
+                    {(() => {
+                      const cpuVal = (perf && typeof perf.cpu_pct === 'number') ? perf.cpu_pct
+                        : (typeof dev.cpu_pct === 'number' ? dev.cpu_pct : null);
+                      return cpuVal !== null && cpuVal !== undefined ? cpuVal.toFixed(1) : '—';
+                    })()}
+                  </td>
+                  <td className="px-4 py-2">
+                    {(() => {
+                      const memVal = (perf && typeof perf.memory_pct === 'number') ? perf.memory_pct
+                        : (typeof dev.memory_pct === 'number' ? dev.memory_pct : null);
+                      return memVal !== null && memVal !== undefined ? memVal.toFixed(1) : '—';
+                    })()}
+                  </td>
                   <td className="px-4 py-2">{devSessions.length}</td>
+
+                  {/* change: three separate columns for auth info */}
+                  <td className="px-4 py-2 font-mono text-sm">{lastAuthMethod}</td>
+                  <td className="px-4 py-2">{lastAuthUser}</td>
+                  <td className="px-4 py-2">{lastAuthTime}</td>
+
                   <td className="px-4 py-2">
                     <Link
                       to={`/devices/${encodeURIComponent(dev.device_ip)}`}

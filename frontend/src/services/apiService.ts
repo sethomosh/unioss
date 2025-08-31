@@ -1,4 +1,6 @@
 // src/services/apiService.ts
+// ready to replace file — changes marked with `// change:` comments
+
 import {
   Device,
   Session,
@@ -95,7 +97,7 @@ const mockData = {
   ] as TrafficData[],
 
   sessions: [
-    { session_id: 'sess_001', device_ip: '192.168.1.1', username: 'admin', start_time: new Date(Date.now() - 3600000).toISOString(), last_activity: new Date().toISOString(), protocol: 'SSH', status: 'active' },
+    { session_id: 'sess_001', device_ip: '192.168.1.1', username: 'admin', start_time: new Date(Date.now() - 3600000).toISOString(), last_activity: new Date().toISOString(), protocol: 'SSH', status: 'active', authenticated_via: 'ssh' },
   ] as Session[],
 
   alerts: [
@@ -123,6 +125,19 @@ function normalizeDevice(d: any): Device {
     cpu_pct: d.cpu_pct ?? null,
     memory_pct: d.memory_pct ?? null,
   };
+}
+
+// small helper for ISO coercion
+function toIsoStringSafe(v: any): string {
+  if (!v) return '';
+  if (typeof v === 'string') return v;
+  if (v instanceof Date) return v.toISOString();
+  try {
+    const d = new Date(v);
+    return isNaN(+d) ? '' : d.toISOString();
+  } catch {
+    return '';
+  }
 }
 
 // API service
@@ -181,7 +196,51 @@ export const apiService = {
 
   // Sessions
   async getSessions(): Promise<Session[]> {
-    return USE_MOCK ? mockData.sessions : apiRequest<Session[]>('/access/sessions');
+    if (USE_MOCK) return mockData.sessions;
+
+    // backend returns rows shaped like:
+    // { user, ip, mac, login_time, logout_time, duration_seconds, authenticated_via, created_at, id }
+    // but frontend expects: { session_id, device_ip, username, start_time, last_activity, protocol, status, authenticated_via }
+
+    const raw: any[] = await apiRequest<any[]>('/access/sessions');
+
+    const normalized: Session[] = (raw || []).map((r: any, idx: number) => {
+      // change: robust normalization + fallback keys
+      const startIso = toIsoStringSafe(r.start_time ?? r.login_time ?? r.login_time_iso ?? r.created_at ?? '');
+      const lastIso = toIsoStringSafe(r.last_activity ?? r.logout_time ?? r.logout_time_iso ?? '');
+      const status = r.status ?? (r.logout_time ? 'disconnected' : 'active');
+
+      return {
+        session_id: String(r.session_id ?? r.id ?? `sess_${idx}_${Math.random().toString(36).slice(2,8)}`),
+        device_ip: String(r.device_ip ?? r.ip ?? r.deviceIp ?? ''),
+        username: String(r.username ?? r.user ?? ''),
+        start_time: startIso || '',
+        last_activity: lastIso || '',
+        protocol: String(r.protocol ?? r.method ?? ''),
+        status: status,
+        authenticated_via: r.authenticated_via ?? r.authenticated_via ?? '',
+      } as Session;
+    });
+
+    // change: dedupe sessions to prevent duplicate rows showing in UI (keeps the row with the latest last_activity)
+    const byKey = new Map<string, Session>();
+    for (const s of normalized) {
+      const key = (s.session_id && s.session_id !== '') ? s.session_id : `${s.device_ip}|${s.username}|${s.start_time}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, s);
+      } else {
+        // prefer the entry with later last_activity if available
+        const eTime = existing.last_activity ? new Date(existing.last_activity).getTime() : 0;
+        const sTime = s.last_activity ? new Date(s.last_activity).getTime() : 0;
+        if (sTime >= eTime) {
+          byKey.set(key, s);
+        }
+      }
+    }
+    const deduped = Array.from(byKey.values());
+
+    return deduped;
   },
 
   // Alerts

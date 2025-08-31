@@ -960,27 +960,57 @@ def discovery_devices():
         # First populate devices from latest perf rows
         for d in perf_devices:
             ip = d["device_ip"]
-            last_seen = d.get("timestamp")
-            online = False
-            if last_seen:
+            perf_ts = d.get("timestamp")
+            # parse perf_ts into datetime if needed for comparison
+            perf_dt = None
+            if perf_ts:
                 try:
-                    last_seen_dt = datetime.fromisoformat(last_seen) if isinstance(last_seen, str) else last_seen
-                    online = (now - last_seen_dt).total_seconds() <= ONLINE_THRESHOLD
+                    perf_dt = datetime.fromisoformat(perf_ts) if isinstance(perf_ts, str) else perf_ts
                 except Exception:
-                    online = False
+                    # if parsing fails, ignore and treat as None
+                    perf_dt = perf_ts if isinstance(perf_ts, datetime) else None
 
             # SNMP discovery rows might use "ip" or "device_ip" depending on implementation.
             snmp_info = next((x for x in discovery_rows if x.get("ip") == ip or x.get("device_ip") == ip), None)
 
-            # prefer status from SNMP discovery info if available, otherwise use online heuristic
+            # discovery last_seen (may be ISO string or datetime)
+            disc_last_seen_raw = None
+            disc_dt = None
+            if isinstance(snmp_info, dict):
+                disc_last_seen_raw = snmp_info.get("last_seen") or snmp_info.get("timestamp")
+                if disc_last_seen_raw:
+                    try:
+                        disc_dt = datetime.fromisoformat(disc_last_seen_raw) if isinstance(disc_last_seen_raw, str) else disc_last_seen_raw
+                    except Exception:
+                        disc_dt = disc_last_seen_raw if isinstance(disc_last_seen_raw, datetime) else None
+
+            # choose most recent last_seen between perf_ts and discovery last_seen
+            chosen_dt = None
+            last_seen_source = None
+            if perf_dt and disc_dt:
+                if perf_dt >= disc_dt:
+                    chosen_dt = perf_dt
+                    last_seen_source = "perf"
+                else:
+                    chosen_dt = disc_dt
+                    last_seen_source = "discovery"
+            elif perf_dt:
+                chosen_dt = perf_dt
+                last_seen_source = "perf"
+            elif disc_dt:
+                chosen_dt = disc_dt
+                last_seen_source = "discovery"
+
+            last_seen_str = _format_ts_for_client(chosen_dt)
+
+            # prefer status from SNMP discovery info if available; otherwise use online heuristic
             inferred_status = None
             if isinstance(snmp_info, dict):
-                inferred_status = snmp_info.get("status") or (snmp_info.get("online") and ("up" if snmp_info.get("online") else None))
+                # allow boolean 'online' or 'status' string
+                inferred_status = snmp_info.get("status") or (("up" if snmp_info.get("online") else None) if snmp_info.get("online") is not None else None)
+            # if still None, infer from chosen_dt vs now threshold
             if not inferred_status:
-                inferred_status = "up" if online else "down"
-
-            # format timestamp from performance row for the client
-            last_seen_str = _format_ts_for_client(last_seen)
+                inferred_status = "up" if (chosen_dt and (now - chosen_dt).total_seconds() <= ONLINE_THRESHOLD) else "down"
 
             # build hostname/desc/vendor/os by checking many fallbacks (discovery may use different keys)
             hostname = None
@@ -995,14 +1025,29 @@ def discovery_devices():
                 os_version_val = snmp_info.get("os_version") or snmp_info.get("os")
                 error_val = snmp_info.get("error")
 
+            # prefer performance metrics from the perf row; if missing, fall back to discovery-provided metrics
+            cpu_val = d.get("cpu_pct") if d.get("cpu_pct") is not None else (snmp_info.get("cpu_pct") if isinstance(snmp_info, dict) else None)
+            mem_val = d.get("memory_pct") if d.get("memory_pct") is not None else (snmp_info.get("memory_pct") if isinstance(snmp_info, dict) else None)
+            uptime_val = d.get("uptime_seconds") if d.get("uptime_seconds") is not None else (snmp_info.get("uptime_seconds") if isinstance(snmp_info, dict) else None)
+
+            # compute boolean online (explicit discovery status overrides heuristics)
+            online_bool = False
+            if isinstance(snmp_info, dict) and snmp_info.get("status") is not None:
+                online_bool = str(snmp_info.get("status")).lower() in ("up", "online", "true")
+            elif chosen_dt:
+                online_bool = (now - chosen_dt).total_seconds() <= ONLINE_THRESHOLD
+            else:
+                online_bool = False
+
             devices[ip] = {
                 "device_ip": ip,
-                "cpu_pct": d.get("cpu_pct"),
-                "memory_pct": d.get("memory_pct"),
-                "uptime_seconds": d.get("uptime_seconds"),
+                "cpu_pct": cpu_val,
+                "memory_pct": mem_val,
+                "uptime_seconds": uptime_val,
                 "interfaces": [],
-                "online": online,
+                "online": online_bool,
                 "last_seen": last_seen_str,
+                "last_seen_source": last_seen_source,   # new field (perf | discovery | None)
                 # only set discovery values if present; otherwise leave None (frontend shows —)
                 "hostname": hostname,
                 "description": description,
@@ -1012,6 +1057,7 @@ def discovery_devices():
                 "error": error_val
             }
 
+            print(f"[discovery-debug] ip={ip} snmp_info={snmp_info} perf_ts={perf_ts} chosen_last_seen={last_seen_str} cpu={cpu_val}")
             
         # Add discovered-only devices (no perf rows)
         for disc in discovery_rows:

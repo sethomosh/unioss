@@ -1,3 +1,5 @@
+// src/pages/DeviceDetailsPage.tsx
+
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { apiService } from '../services/apiService';
@@ -6,6 +8,7 @@ import type {
   PerfHistoryEntry,
   TrafficHistoryEntry,
   IfRow,
+  Session,
 } from '../types/types';
 
 export const DeviceDetailsPage: React.FC = () => {
@@ -13,6 +16,7 @@ export const DeviceDetailsPage: React.FC = () => {
   const [data, setData] = useState<DeviceDetailsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
 
   useEffect(() => {
     if (!deviceIp) return;
@@ -20,8 +24,13 @@ export const DeviceDetailsPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const resp = await apiService.getDeviceDetails(decodeURIComponent(deviceIp));
+        // change: fetch device details + sessions in parallel; sessions are deduped by apiService
+        const [resp, sess] = await Promise.all([
+          apiService.getDeviceDetails(decodeURIComponent(deviceIp)),
+          apiService.getSessions(),
+        ]);
         setData(resp);
+        setSessions(sess || []);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to load device details');
       } finally {
@@ -34,6 +43,14 @@ export const DeviceDetailsPage: React.FC = () => {
   if (loading) return <div className="p-6 text-center">Loading device details…</div>;
   if (error) return <div className="p-6 text-red-600">Error: {error}</div>;
   if (!data) return <div className="p-6">No data</div>;
+
+  // compute auth history for this device
+  const deviceSessions = sessions
+    .filter(s => s.device_ip === data.device_ip)
+    .sort((a, b) => (b.start_time || '').localeCompare(a.start_time || ''));
+
+  // change: show latest 10 deduped events (apiService already dedupes duplicates)
+  const recent = deviceSessions.slice(0, 10);
 
   return (
     <div className="p-6 space-y-6">
@@ -56,6 +73,44 @@ export const DeviceDetailsPage: React.FC = () => {
           </div>
         ) : (
           <div className="mt-2 text-sm text-gray-600">No snapshot available</div>
+        )}
+      </div>
+
+      {/* Access Control / Auth History */}
+      <div className="bg-white p-4 rounded shadow">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">access control / auth history</h2>
+          <div className="text-sm text-gray-500">{deviceSessions.length} total</div>
+        </div>
+
+        {recent.length === 0 ? (
+          <div className="mt-2 text-sm text-gray-600">No access sessions found for this device.</div>
+        ) : (
+          <div className="overflow-x-auto mt-2">
+            <table className="min-w-full">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="px-3 py-2 text-left">timestamp</th>
+                  <th className="px-3 py-2 text-left">method</th>
+                  <th className="px-3 py-2 text-left">user / mac</th>
+                  <th className="px-3 py-2 text-left">logout</th>
+                  <th className="px-3 py-2 text-left">duration (s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((s, i) => (
+                  <tr key={s.session_id || i} className="border-t">
+                    <td className="px-3 py-2">{s.start_time ? new Date(s.start_time).toLocaleString() : '—'}</td>
+                    <td className="px-3 py-2">{s.authenticated_via || '—'}</td>
+                    <td className="px-3 py-2">{s.username || '—'}</td>
+                    <td className="px-3 py-2">{s.last_activity ? new Date(s.last_activity).toLocaleString() : '—'}</td>
+                    <td className="px-3 py-2">{/* duration not provided by normalized Session; show — */ '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 text-sm text-gray-500">showing latest {recent.length} events. for full audit, use the access sessions endpoint.</div>
+          </div>
         )}
       </div>
 

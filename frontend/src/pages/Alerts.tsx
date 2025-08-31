@@ -1,10 +1,11 @@
 // src/pages/Alerts.tsx
 import React, { useEffect, useState } from 'react';
+import { apiService } from '../services/apiService';
 
 export interface AlertType {
   id: string;
   message: string;
-  severity: 'critical' | 'high' | 'medium' | 'low' | 'warning';
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'warning' | string;
   acknowledged?: boolean;
   timestamp?: string;
   device_ip?: string;
@@ -16,15 +17,27 @@ type AlertsProps = {
   onAcknowledge?: (id: string) => void;
 };
 
+function normalizeAlert(raw: any): AlertType {
+  // backend might return id as number, timestamp as datetime string or None, etc.
+  return {
+    id: raw.id != null ? String(raw.id) : (raw.alert_id ? String(raw.alert_id) : ''),
+    message: raw.message ?? raw.msg ?? raw.title ?? '',
+    severity: raw.severity ?? raw.level ?? 'low',
+    acknowledged: !!raw.acknowledged,
+    timestamp: raw.timestamp ? String(raw.timestamp) : (raw.time ? String(raw.time) : undefined),
+    device_ip: raw.device_ip ?? raw.deviceIp ?? raw.source ?? undefined,
+    category: raw.category ?? raw.type ?? undefined,
+  };
+}
+
 export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowledge }) => {
   const [alerts, setAlerts] = useState<AlertType[]>(propsAlerts ?? []);
   const [loading, setLoading] = useState<boolean>(!propsAlerts);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch alerts if not provided via props
   useEffect(() => {
     if (propsAlerts) {
-      setAlerts(propsAlerts);
+      setAlerts(propsAlerts.map(normalizeAlert));
       setLoading(false);
       return;
     }
@@ -32,16 +45,16 @@ export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowled
     let mounted = true;
     const load = async () => {
       setLoading(true);
+      setError(null);
       try {
-        const res = await fetch('/api/alerts/recent?limit=5').then(r => {
-          if (!r.ok) throw new Error(`Alerts fetch failed: ${r.status}`);
-          return r.json();
-        });
+        const res = await apiService.getAlerts(5);
         if (!mounted) return;
-        setAlerts(res);
+        // backend could return { alerts: [...] } or an array.
+        const arr = Array.isArray(res) ? res : (res.alerts ?? []);
+        setAlerts((arr as any[]).map(normalizeAlert));
       } catch (err) {
         console.error('Failed to fetch alerts', err);
-        if (mounted) setError('Failed to load alerts');
+        if (mounted) setError((err as Error).message ?? 'Failed to load alerts');
       } finally {
         if (mounted) setLoading(false);
       }
@@ -51,6 +64,20 @@ export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowled
       mounted = false;
     };
   }, [propsAlerts]);
+
+  const handleAcknowledge = async (id: string) => {
+    try {
+      // optimistic UI update
+      setAlerts(prev => prev.map(a => (a.id === id ? { ...a, acknowledged: true } : a)));
+      await apiService.acknowledgeAlert(id);
+      onAcknowledge?.(id);
+    } catch (err) {
+      // revert / surface error
+      console.error('Acknowledge failed', err);
+      setAlerts(prev => prev.map(a => (a.id === id ? { ...a, acknowledged: false } : a)));
+      setError('Failed to acknowledge alert');
+    }
+  };
 
   if (loading) return <div className="p-4 text-sm text-muted-foreground">Loading alerts...</div>;
   if (error) return <div className="p-4 text-sm text-red-600">{error}</div>;
@@ -62,7 +89,7 @@ export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowled
         <p className="text-sm text-muted-foreground">No alerts</p>
       ) : (
         <ul className="space-y-2">
-          {alerts.slice(0, 5).map(alert => {
+          {alerts.slice(0, 10).map(alert => {
             const severityColor = (() => {
               if (alert.severity === 'critical') return 'text-red-500';
               if (['high', 'warning'].includes(alert.severity)) return 'text-orange-500';
@@ -81,7 +108,8 @@ export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowled
                   </span>
                   <button
                     className="text-xs text-primary hover:underline"
-                    onClick={() => onAcknowledge?.(alert.id)}
+                    onClick={() => handleAcknowledge(alert.id)}
+                    disabled={alert.acknowledged}
                   >
                     {alert.acknowledged ? 'Acknowledged' : 'Acknowledge'}
                   </button>
