@@ -1,4 +1,4 @@
-// src/pages/DevicesPage.tsx
+// src/pages/DevicesPage.tsx - Fixed dark theme and improved styling
 
 import React, { useEffect, useState } from 'react';
 import { apiService } from '../services/apiService';
@@ -83,7 +83,6 @@ export const DevicesPage: React.FC = () => {
     loadData();
   }, []);
 
-  // helper: get latest session for device_ip
   const getLatestSessionForDevice = (ip: string): Session | null => {
     const ds = sessions.filter(s => s.device_ip === ip && s.start_time);
     if (ds.length === 0) return null;
@@ -91,141 +90,140 @@ export const DevicesPage: React.FC = () => {
     return ds[0];
   };
 
-  if (loading) return <div className="p-4 text-center">Loading devices…</div>;
+  if (loading) return <div className="p-6 text-center text-muted-foreground">Loading devices…</div>;
 
   return (
-    <div className="p-6 space-y-8">
-      <h1 className="text-2xl font-bold mb-4">Devices</h1>
+    <div className="space-y-6 w-full">
+      <h1 className="text-xl font-bold text-foreground">Devices</h1>
 
-      {/* Devices Table */}
-      <div className="overflow-x-auto bg-white rounded-xl shadow">
-        <table className="min-w-full border border-gray-200">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-4 py-2 text-left">IP</th>
-              <th className="px-4 py-2 text-left">Hostname</th>
-              <th className="px-4 py-2 text-left">Vendor</th>
-              <th className="px-4 py-2 text-left">OS</th>
-              <th className="px-4 py-2 text-left">Status</th>
-              <th className="px-4 py-2 text-left">Last Seen</th>
-              <th className="px-4 py-2 text-left">CPU %</th>
-              <th className="px-4 py-2 text-left">Memory %</th>
-              <th className="px-4 py-2 text-left">Sessions</th>
+      {/* Devices Table - Fixed dark theme */}
+      <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead className="bg-muted border-b border-border">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">IP</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hostname</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Vendor</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">OS</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Seen</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">CPU %</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Memory %</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Sessions</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Auth</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Auth User</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Auth Time</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Details</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Alerts</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {devices.map(dev => {
+                const perf = performance[dev.device_ip];
+                const devSessions = sessions.filter(s => s.device_ip === dev.device_ip);
+                const devAlerts = alerts.filter(a => a.device_ip === dev.device_ip);
 
-              {/* change: split the last-auth into three clearer columns */}
-              <th className="px-4 py-2 text-left">last auth</th>
-              <th className="px-4 py-2 text-left">auth user</th>
-              <th className="px-4 py-2 text-left">auth time</th>
+                const rawLastSeen = dev.last_seen ?? dev.lastSeen ?? null;
+                let lastSeenStr = '—';
+                if (rawLastSeen) {
+                  const d = new Date(rawLastSeen);
+                  lastSeenStr = !isNaN(+d) ? d.toLocaleString() : '—';
+                }
+                const latest = getLatestSessionForDevice(dev.device_ip);
 
-              <th className="px-4 py-2 text-left">Details</th>
-              <th className="px-4 py-2 text-left">Alerts</th>
-            </tr>
-          </thead>
-          <tbody>
-            {devices.map(dev => {
-              const perf = performance[dev.device_ip];
-              const devSessions = sessions.filter(s => s.device_ip === dev.device_ip);
-              const devAlerts = alerts.filter(a => a.device_ip === dev.device_ip);
+                const lastAuthMethod = latest?.authenticated_via ?? '—';
+                const lastAuthUser = latest?.username ?? '—';
+                const lastAuthTime = latest?.start_time ? new Date(latest.start_time).toLocaleString() : '—';
 
-              const rawLastSeen = dev.last_seen ?? dev.lastSeen ?? null;
-              let lastSeenStr = '—';
-              if (rawLastSeen) {
-                const d = new Date(rawLastSeen);
-                lastSeenStr = !isNaN(+d) ? d.toLocaleString() : '—';
-              }
-              const latest = getLatestSessionForDevice(dev.device_ip);
-
-              // change: break out method/user/time separately for easier layout and readability
-              const lastAuthMethod = latest?.authenticated_via ?? '—';
-              const lastAuthUser = latest?.username ?? '—';
-              const lastAuthTime = latest?.start_time ? new Date(latest.start_time).toLocaleString() : '—';
-
-              return (
-                <tr key={dev.device_ip} className="border-t hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono">{dev.device_ip}</td>
-                  <td className="px-4 py-2">{dev.hostname || '—'}</td>
-                  <td className="px-4 py-2">{dev.vendor || '—'}</td>
-                  <td className="px-4 py-2">{dev.os || dev.os_version || '—'}</td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`px-2 py-1 rounded text-sm ${
-                        dev.status === 'up'
-                          ? 'bg-green-100 text-green-700'
-                          : dev.status === 'unknown'
-                            ? 'bg-gray-100 text-gray-700'
-                            : 'bg-red-100 text-red-700'
-                      }`}
-                    >
-                      {dev.status || 'unknown'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2">{lastSeenStr}</td>
-                  <td className="px-4 py-2">
-                    {(() => {
-                      const cpuVal = (perf && typeof perf.cpu_pct === 'number') ? perf.cpu_pct
-                        : (typeof dev.cpu_pct === 'number' ? dev.cpu_pct : null);
-                      return cpuVal !== null && cpuVal !== undefined ? cpuVal.toFixed(1) : '—';
-                    })()}
-                  </td>
-                  <td className="px-4 py-2">
-                    {(() => {
-                      const memVal = (perf && typeof perf.memory_pct === 'number') ? perf.memory_pct
-                        : (typeof dev.memory_pct === 'number' ? dev.memory_pct : null);
-                      return memVal !== null && memVal !== undefined ? memVal.toFixed(1) : '—';
-                    })()}
-                  </td>
-                  <td className="px-4 py-2">{devSessions.length}</td>
-
-                  {/* change: three separate columns for auth info */}
-                  <td className="px-4 py-2 font-mono text-sm">{lastAuthMethod}</td>
-                  <td className="px-4 py-2">{lastAuthUser}</td>
-                  <td className="px-4 py-2">{lastAuthTime}</td>
-
-                  <td className="px-4 py-2">
-                    <Link
-                      to={`/devices/${encodeURIComponent(dev.device_ip)}`}
-                      className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
-                    >
-                      Details
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">{devAlerts.length}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                return (
+                  <tr key={dev.device_ip} className="hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">{dev.device_ip}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{dev.hostname || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{dev.vendor || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{dev.os || dev.os_version || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                          dev.status === 'up'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                            : dev.status === 'unknown'
+                              ? 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
+                              : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                        }`}
+                      >
+                        {dev.status || 'unknown'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">{lastSeenStr}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">
+                      {(() => {
+                        const cpuVal = (perf && typeof perf.cpu_pct === 'number') ? perf.cpu_pct
+                          : (typeof dev.cpu_pct === 'number' ? dev.cpu_pct : null);
+                        return cpuVal !== null && cpuVal !== undefined ? cpuVal.toFixed(1) : '—';
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-foreground">
+                      {(() => {
+                        const memVal = (perf && typeof perf.memory_pct === 'number') ? perf.memory_pct
+                          : (typeof dev.memory_pct === 'number' ? dev.memory_pct : null);
+                        return memVal !== null && memVal !== undefined ? memVal.toFixed(1) : '—';
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-foreground">{devSessions.length}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{lastAuthMethod}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{lastAuthUser}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{lastAuthTime}</td>
+                    <td className="px-4 py-3">
+                      <Link
+                        to={`/devices/${encodeURIComponent(dev.device_ip)}`}
+                        className="inline-flex items-center px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 text-sm font-medium transition-colors"
+                      >
+                        Details
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center justify-center w-6 h-6 bg-destructive/10 text-destructive rounded-full text-xs font-medium">
+                        {devAlerts.length}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* SNMP Tools */}
-      <div className="bg-white p-6 rounded-xl shadow">
-        <h2 className="text-xl font-semibold mb-4">SNMP Tools</h2>
+      {/* SNMP Tools - Enhanced styling */}
+      <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-foreground mb-6">SNMP Tools</h2>
 
         {/* SNMP GET */}
-        <div className="mb-6">
-          <h3 className="text-md font-semibold mb-2">SNMP GET</h3>
+        <div className="mb-8">
+          <h3 className="text-sm font-medium text-muted-foreground mb-4">SNMP GET</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <input
               type="text"
               placeholder="Device IP"
               value={deviceIp}
               onChange={e => setDeviceIp(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md"
+              className="px-4 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
             />
             <input
               type="text"
               placeholder="OID"
               value={oid}
               onChange={e => setOid(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md font-mono"
+              className="px-4 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20 font-mono text-sm"
             />
           </div>
-          <div className="flex flex-wrap gap-2 mb-3">
+          <div className="flex flex-wrap gap-2 mb-4">
             {commonOIDs.map(item => (
               <button
                 key={item.oid}
                 onClick={() => setOid(item.oid)}
-                className="px-3 py-1 bg-gray-100 rounded-md hover:bg-gray-200 text-sm"
+                className="px-3 py-1.5 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 text-sm font-medium transition-colors"
               >
                 {item.name}
               </button>
@@ -234,7 +232,7 @@ export const DevicesPage: React.FC = () => {
           <button
             onClick={handleSNMPGet}
             disabled={snmpLoading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
           >
             {snmpLoading ? 'Fetching…' : 'SNMP GET'}
           </button>
@@ -242,52 +240,61 @@ export const DevicesPage: React.FC = () => {
 
         {/* SNMP WALK */}
         <div className="mb-6">
-          <h3 className="text-md font-semibold mb-2">SNMP WALK</h3>
+          <h3 className="text-sm font-medium text-muted-foreground mb-4">SNMP WALK</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <input
               type="text"
               placeholder="Device IP"
               value={deviceIp}
               onChange={e => setDeviceIp(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md"
+              className="px-4 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
             />
             <input
               type="text"
               placeholder="OID"
               value={oid}
               onChange={e => setOid(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md font-mono"
+              className="px-4 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20 font-mono text-sm"
             />
           </div>
           <button
             onClick={handleSNMPWalk}
             disabled={snmpLoading}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+            className="px-4 py-2 bg-accent text-accent-foreground rounded-lg hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
           >
             {snmpLoading ? 'Walking…' : 'SNMP WALK'}
           </button>
         </div>
 
-        {snmpError && <div className="bg-red-100 border border-red-300 rounded-lg p-4 mb-4 text-red-700">{snmpError}</div>}
+        {snmpError && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 mb-4">
+            <p className="text-destructive text-sm font-medium">{snmpError}</p>
+          </div>
+        )}
 
         {snmpResult && (
-          <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+          <div className="bg-muted rounded-lg p-4 space-y-3">
+            <h4 className="text-sm font-medium text-foreground mb-3">SNMP Result:</h4>
             {Array.isArray(snmpResult) ? (
               snmpResult.map((entry, idx) => (
-                <div key={idx} className="p-2 border-b border-gray-200">
+                <div key={idx} className="bg-card border border-border rounded-lg p-3">
                   {Object.entries(entry).map(([k, v]) => (
-                    <div key={k}>
-                      <strong>{k}:</strong> {String(v)}
+                    <div key={k} className="flex justify-between items-start py-1">
+                      <span className="font-medium text-foreground text-sm">{k}:</span>
+                      <span className="text-muted-foreground text-sm ml-4 break-all">{String(v)}</span>
                     </div>
                   ))}
                 </div>
               ))
             ) : (
-              Object.entries(snmpResult).map(([k, v]) => (
-                <div key={k}>
-                  <strong>{k}:</strong> {String(v)}
-                </div>
-              ))
+              <div className="bg-card border border-border rounded-lg p-3">
+                {Object.entries(snmpResult).map(([k, v]) => (
+                  <div key={k} className="flex justify-between items-start py-1">
+                    <span className="font-medium text-foreground text-sm">{k}:</span>
+                    <span className="text-muted-foreground text-sm ml-4 break-all">{String(v)}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

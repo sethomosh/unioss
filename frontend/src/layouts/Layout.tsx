@@ -29,7 +29,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       <Topbar title={title} onSidebarToggle={() => setCollapsed(!collapsed)} />
       
       {/* Main layout container below topbar */}
-      <div className="flex flex-1 mt-16"> {/* mt-16 pushes content below fixed topbar */}
+      <div className="flex flex-1 pt-16"> {/* pt-16 instead of mt-16 to prevent content overlap */}
         {/* Sidebar */}
         <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
         

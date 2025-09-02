@@ -91,15 +91,22 @@ async def startup_event():
 
 
 origins = [
-    "http://localhost:5173",
+    "http://localhost:5173",  # Vite default
     "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",  # when serving frontend from backend
 ]
+
+# allow wildcard when UNISYS_DEV=1 (only for development)
+if os.getenv("UNISYS_DEV", "1") == "1":
+    allow_origins = ["*"]
+else:
+    allow_origins = origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5174"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
