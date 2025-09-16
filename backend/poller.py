@@ -4,6 +4,9 @@ import time
 import random
 import logging
 import asyncio
+import math
+from decimal import Decimal
+from datetime import datetime as _dt
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -32,9 +35,36 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _poll_semaphore
 
 
+def _to_finite_float(val, default=0.0) -> float:
+    """Normalize to float; handle Decimal, str, None, NaN, inf -> default."""
+    if val is None:
+        return float(default)
+    try:
+        if isinstance(val, Decimal):
+            v = float(val)
+        else:
+            v = float(val)
+    except Exception:
+        return float(default)
+    return float(v) if math.isfinite(v) else float(default)
+
+def _to_int(val, default=0) -> int:
+    """Normalize to int; handle str, float, None -> default."""
+    if val is None:
+        return int(default)
+    try:
+        return int(val)
+    except Exception:
+        try:
+            return int(float(val))
+        except Exception:
+            return int(default)
+
+
 def save_performance_metrics_row(row: Dict[str, Any]) -> bool:
     """
-    Save a single performance metric row. Uses get_db_connection (same as rest of codebase).
+    Save a single performance metric row. Defensive: coerce numeric fields to primitives
+    so that DB never receives NULL for cpu_pct / memory_pct / uptime_seconds.
     Returns True on success, False otherwise.
     """
     conn = None
@@ -42,18 +72,40 @@ def save_performance_metrics_row(row: Dict[str, Any]) -> bool:
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # normalize device ip
+        device_ip = str(row.get("device_ip") or row.get("ip") or "")
+
+        # Accept either cpu_pct or cpu; memory_pct or memory / mem; uptime_seconds or uptime/u
+        cpu_raw = row.get("cpu_pct", row.get("cpu", None))
+        mem_raw = row.get("memory_pct", row.get("memory", row.get("mem", None)))
+        uptime_raw = row.get("uptime_seconds", row.get("uptime", row.get("uptime_secs", None)))
+
+        cpu_safe = _to_finite_float(cpu_raw, default=0.0)
+        mem_safe = _to_finite_float(mem_raw, default=0.0)
+        uptime_safe = _to_int(uptime_raw, default=0)
+
+        # timestamp handling: accept datetime or ISO str or fallback to now
+        ts = row.get("timestamp") or row.get("time") or None
+        ts_val = None
+        if isinstance(ts, _dt):
+            ts_val = ts
+        elif isinstance(ts, str) and ts:
+            try:
+                # Python fromisoformat handles many ISO styles; fallback to now on parse fail
+                ts_val = _dt.fromisoformat(ts)
+            except Exception:
+                ts_val = None
+
+        if ts_val is None:
+            ts_val = _dt.utcnow()
+
         cursor.execute(
             """
             INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
-            VALUES (%s,%s,%s,%s,%s)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (
-                row.get("device_ip"),
-                row.get("cpu_pct"),
-                row.get("memory_pct"),
-                row.get("uptime_seconds"),          # FIXED: use uptime_seconds (matches DB)
-                row.get("timestamp") or datetime.utcnow(),
-            ),
+            (device_ip, cpu_safe, mem_safe, uptime_safe, ts_val),
         )
         conn.commit()
         return True
@@ -76,111 +128,6 @@ def save_performance_metrics_row(row: Dict[str, Any]) -> bool:
                 conn.close()
             except Exception:
                 logger.exception("Failed to close connection")
-
-
-async def poll_device(device: Dict[str, Any], fake: bool = True):
-    ip = device["ip"]
-    device_id = device.get("id")
-
-    sem = _get_semaphore()
-    async with sem:
-        logger.info(f"Polling device {ip} (fake={fake})")
-
-        conn = None
-        cursor = None
-
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT id, name, ifIndex FROM device_interfaces WHERE device_id=%s", (device_id,))
-            interfaces = cursor.fetchall()
-
-            traffic_rows: List[Dict[str, Any]] = []
-
-            if fake:
-                # DEMO MODE: still create a perf row even if there are no interfaces
-                for iface in interfaces:
-                    in_kbps = round(random.uniform(10, 500), 2)
-                    out_kbps = round(random.uniform(10, 500), 2)
-                    in_err = random.randint(0, 5)
-                    out_err = random.randint(0, 5)
-
-                    traffic_rows.append({
-                        "device_ip": ip,
-                        "interface_index": iface["ifIndex"],
-                        "interface_name": iface["name"],
-                        "inbound_kbps": in_kbps,
-                        "outbound_kbps": out_kbps,
-                        "in_errors": in_err,
-                        "out_errors": out_err,
-                        "errors": in_err + out_err,
-                        "timestamp": datetime.utcnow(),
-                    })
-
-                # FIXED: key name matches DB/other code
-                perf_row = {
-                    "device_ip": ip,
-                    "cpu_pct": round(random.uniform(5, 90), 1),
-                    "memory_pct": round(random.uniform(20, 95), 1),
-                    "uptime_seconds": random.randint(1000, 1000000),
-                    "timestamp": datetime.utcnow(),
-                }
-
-            else:
-                # REAL SNMP MODE (offload to a thread so we don't block the loop)
-                try:
-                    metrics = await asyncio.to_thread(get_traffic_metrics, ip)
-                    for iface in interfaces:
-                        row = next((r for r in metrics if r.get("interface_index") == iface.get("ifIndex")), None)
-                        if row:
-                            row["interface_name"] = iface["name"]
-                            traffic_rows.append(row)
-                except Exception as e:
-                    logger.exception("Traffic poll failed for %s: %s", ip, e)
-
-                perf_row = None
-                try:
-                    perf_row = await asyncio.to_thread(get_performance_metrics, ip)
-                    if perf_row:
-                        # ensure keys match what save_performance_metrics_row expects
-                        perf_row.setdefault("device_ip", ip)
-                        # if the returned perf_row uses a different key name, normalize it here:
-                        if "uptime_secs" in perf_row and "uptime_seconds" not in perf_row:
-                            perf_row["uptime_seconds"] = perf_row.pop("uptime_secs")
-                        perf_row.setdefault("timestamp", datetime.utcnow())
-                except Exception as e:
-                    logger.exception("Performance poll failed for %s: %s", ip, e)
-
-            # save traffic metrics
-            if traffic_rows:
-                try:
-                    saved = save_traffic_metrics(traffic_rows)
-                    logger.info(f"Saved {saved} traffic rows for {ip}")
-                except Exception:
-                    logger.exception("Failed to save traffic rows for %s", ip)
-
-            # save performance metrics
-            if perf_row:
-                ok = await asyncio.to_thread(save_performance_metrics_row, perf_row)
-                if ok:
-                    logger.info(f"Saved performance metrics for {ip}")
-                else:
-                    logger.error(f"Failed to save performance metrics for {ip}")
-
-        except Exception as e:
-            logger.exception("Polling device %s failed: %s", ip, e)
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except Exception:
-                    logger.exception("Failed to close cursor")
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    logger.exception("Failed to close connection")
-
 
 async def poll_all_devices(fake: bool = True):
     conn = get_db_connection()

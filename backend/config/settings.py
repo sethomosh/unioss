@@ -31,9 +31,9 @@ def configure_logging(app):
 
 
 MYSQL_HOST     = os.getenv('MYSQL_HOST', 'db')
-MYSQL_USER     = os.getenv('MYSQL_USER', 'unios_user')
+MYSQL_USER     = os.getenv('MYSQL_USER', 'unisys_user')
 MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', 'StrongP@ssw0rd')
-MYSQL_DB       = os.getenv('MYSQL_DB', 'unios')
+MYSQL_DB       = os.getenv('MYSQL_DB', 'unioss')
 
 SNMP_HOST      = os.getenv('SNMP_HOST', 'snmpsim')    # ← make sure your code later reads these
 SNMP_PORT      = int(os.getenv('SNMP_PORT', 1161))

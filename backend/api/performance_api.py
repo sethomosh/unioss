@@ -1,17 +1,47 @@
 # backend/api/performance_api.py
-
-from flask import Blueprint, jsonify, current_app
-from backend.modules.performance import get_performance_metrics
+from fastapi import APIRouter, HTTPException
 from backend.utils.db import get_db_connection
 from datetime import datetime as _dt
 import traceback
+import math
+from decimal import Decimal
+from datetime import datetime as _dt
+import logging
 
-performance_api = Blueprint('performance_api', __name__)
+logger = logging.getLogger(__name__)
+router = APIRouter()  # expected to be included under /api in the main app e.g. app.include_router(router, prefix="/performance")
 
+def _to_finite_float(val, default=0.0):
+    if val is None:
+        return float(default)
+    try:
+        if isinstance(val, Decimal):
+            v = float(val)
+        else:
+            v = float(val)
+    except Exception:
+        return float(default)
+    if not math.isfinite(v):
+        return float(default)
+    return v
+
+def _to_int(val, default=0):
+    if val is None:
+        return int(default)
+    try:
+        return int(val)
+    except Exception:
+        try:
+            return int(float(val))
+        except Exception:
+            return int(default)
+
+# replace the old fetch_latest_performance() with this exact function
 def fetch_latest_performance():
     """
-    Query DB for latest performance metrics per device and normalize timestamps.
-    Returns a list of dicts.
+    defensive fetch: always returns plain primitives (no None), logs raw DB rows.
+    returns: list of dicts:
+      device_ip (str), cpu_pct (float), memory_pct (float), uptime_seconds (int), last_updated (ISO str)
     """
     conn = None
     cursor = None
@@ -20,10 +50,10 @@ def fetch_latest_performance():
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT pm.device_ip AS ip,
-                   pm.cpu_pct   AS cpu,
-                   pm.memory_pct AS memory,
-                   pm.uptime_seconds AS uptime,
+            SELECT pm.device_ip AS device_ip,
+                   COALESCE(pm.cpu_pct, 0.0)   AS cpu_pct,
+                   COALESCE(pm.memory_pct, 0.0) AS memory_pct,
+                   COALESCE(pm.uptime_seconds, 0) AS uptime_seconds,
                    pm.timestamp AS last_updated_raw
             FROM performance_metrics pm
             JOIN (
@@ -33,62 +63,87 @@ def fetch_latest_performance():
             ) latest
             ON pm.device_ip = latest.device_ip AND pm.timestamp = latest.maxts
         """)
-        rows = cursor.fetchall()
 
-        # Normalize timestamp
-        for r in rows:
-            ts = r.pop("last_updated_raw", None)
-            if isinstance(ts, _dt):
-                r["last_updated"] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-            elif isinstance(ts, str) and ts:
+        raw_rows = cursor.fetchall() or []
+
+        # debug: log the first few raw rows so we can inspect types/None values
+        if raw_rows:
+            logger.debug("fetch_latest_performance: sample raw_rows (first 5): %s", raw_rows[:5])
+
+        out = []
+        for idx, r in enumerate(raw_rows):
+            device_ip = r.get("device_ip") or ""
+            raw_cpu = r.get("cpu_pct", None)
+            raw_mem = r.get("memory_pct", None)
+            raw_uptime = r.get("uptime_seconds", None)
+            raw_ts = r.get("last_updated_raw", None)
+
+            cpu = _to_finite_float(raw_cpu, default=0.0)
+            memory = _to_finite_float(raw_mem, default=0.0)
+            uptime = _to_int(raw_uptime, default=0)
+
+            # timestamp -> ISO string (Z-terminated) or empty string
+            if isinstance(raw_ts, _dt):
+                last_updated = raw_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+            elif isinstance(raw_ts, str) and raw_ts:
                 try:
-                    parsed = _dt.fromisoformat(ts)
-                    r["last_updated"] = parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    parsed = _dt.fromisoformat(raw_ts)
+                    last_updated = parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
                 except Exception:
-                    r["last_updated"] = ts
+                    last_updated = raw_ts
             else:
-                r["last_updated"] = None
+                last_updated = ""
 
-        return rows
+            # log anomalies to help debug why a None snuck through
+            if raw_cpu is None:
+                logger.debug("fetch_latest_performance: device %s has raw_cpu=None (idx=%s)", device_ip, idx)
+            if raw_cpu is not None and (isinstance(raw_cpu, float) and not math.isfinite(raw_cpu)):
+                logger.debug("fetch_latest_performance: device %s raw_cpu not finite -> %r", device_ip, raw_cpu)
+
+            out.append({
+                "device_ip": device_ip,
+                "cpu_pct": cpu,
+                "memory_pct": memory,
+                "uptime_seconds": uptime,
+                "last_updated": last_updated,
+            })
+
+        return out
 
     finally:
         if cursor:
-            cursor.close()
+            try:
+                cursor.close()
+            except Exception:
+                logger.exception("closing cursor failed")
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                logger.exception("closing conn failed")
 
 
-@performance_api.route('/devices', methods=['GET'])
+@router.get("/", summary="Latest performance per-device")
 def list_performance():
-    """
-    Return last-known performance metrics per device from the DB.
-    """
     try:
         rows = fetch_latest_performance()
-        return jsonify(rows), 200
+        return rows
     except Exception as e:
-        current_app.logger.error(f"Performance /devices error: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        # let the app log a full stack trace; surface a 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@performance_api.route('/metrics', methods=['GET'])
+@router.get("/metrics", summary="Legacy alias for latest performance")
 def performance_metrics():
-    """
-    Same as /devices — return latest metrics from DB (legacy API shape).
-    """
     try:
         rows = fetch_latest_performance()
-        return jsonify(rows), 200
+        return rows
     except Exception as e:
-        current_app.logger.error(f"Performance /metrics error: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@performance_api.route('/history', methods=['GET'])
+@router.get("/history", summary="Historical performance rows")
 def performance_history():
-    """
-    Return historical performance metrics from DB.
-    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -96,17 +151,15 @@ def performance_history():
             SELECT
               device_ip,
               DATE_FORMAT(timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
-              cpu_pct     AS cpu_pct,
-              memory_pct  AS memory_pct,
-              uptime_seconds AS uptime_secs
+              cpu_pct,
+              memory_pct,
+              uptime_seconds
             FROM performance_metrics
             ORDER BY timestamp ASC
         """)
-        rows = cursor.fetchall()
+        rows = cursor.fetchall() or []
         cursor.close()
         conn.close()
-        return jsonify(rows), 200
-
+        return rows
     except Exception as e:
-        current_app.logger.error(f"Performance history error: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))

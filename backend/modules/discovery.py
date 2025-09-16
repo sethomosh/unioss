@@ -48,13 +48,24 @@ def get_device_inventory():
             )
             perf = cursor.fetchone()
             if perf:
-                cpu_pct = perf.get("cpu_pct")
-                memory_pct = perf.get("memory_pct")
-                uptime_seconds = perf.get("uptime_seconds")
+                # coerce DB values to numeric defaults if NULL / non-numeric
+                def _num_cast(v, typ=float, default=0.0):
+                    try:
+                        if v is None:
+                            return default
+                        return typ(v)
+                    except Exception:
+                        return default
+
+                cpu_pct = _num_cast(perf.get("cpu_pct"), float, 0.0)
+                memory_pct = _num_cast(perf.get("memory_pct"), float, 0.0)
+                uptime_seconds = _num_cast(perf.get("uptime_seconds"), int, 0)
             else:
+                # no recent perf row: provide reasonable random defaults
                 cpu_pct = round(20 + 60 * random.random(), 1)
                 memory_pct = round(30 + 50 * random.random(), 1)
                 uptime_seconds = 3600 + int(100000 * random.random())
+
 
             # session count — use access_sessions (app uses this table)
             try:
@@ -76,9 +87,9 @@ def get_device_inventory():
             status = "down"
             error = str(e)
             # keep hostname/description (don't overwrite with None here)
-            cpu_pct = None
-            memory_pct = None
-            uptime_seconds = None
+            cpu_pct = 0.0
+            memory_pct = 0.0
+            uptime_seconds = 0
             last_seen_str = None
 
         device_dict = {

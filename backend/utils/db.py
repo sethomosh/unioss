@@ -27,7 +27,7 @@ def _db_config() -> dict:
         "port": int(os.getenv("MYSQL_PORT", os.getenv("UNISYS_DB_PORT", "3306"))),
         "user": os.getenv("MYSQL_USER", os.getenv("UNISYS_DB_USER", "unisys_user")),
         "password": os.getenv("MYSQL_PASSWORD", os.getenv("UNISYS_DB_PASS", "StrongP@ssw0rd")),
-        "database": os.getenv("MYSQL_DB", os.getenv("UNISYS_DB_NAME", "unisys")),
+        "database": os.getenv("MYSQL_DB", os.getenv("UNISYS_DB_NAME", "unioss")),
         # short timeout to avoid long blocking during container startup problems
         "connection_timeout": int(os.getenv("MYSQL_CONN_TIMEOUT", "10")),
     }
@@ -51,7 +51,9 @@ def get_db_connection():
             password=cfg["password"],
             database=cfg["database"],
             connection_timeout=cfg.get("connection_timeout", 10),
-            autocommit=False
+            autocommit=False,
+            unix_socket=None,
+            use_pure=True  
         )
         return conn
     except mysql_errors.ProgrammingError as e:

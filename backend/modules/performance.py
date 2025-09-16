@@ -20,32 +20,57 @@ def get_performance_metrics(device_ip: str):
     Returns the inserted row as a dict (or None if failed).
     """
     try:
-        cpu_oid = "1.3.6.1.4.1.2021.11.9.0"   # CPU load %
-        mem_oid = "1.3.6.1.4.1.2021.4.6.0"   # Memory %
-        uptime_oid = "1.3.6.1.2.1.1.3.0"     # SysUpTime
-
-        cpu = snmp_get(device_ip, cpu_oid)
-        mem = snmp_get(device_ip, mem_oid)
-        uptime = snmp_get(device_ip, uptime_oid)
+        # Pick the CPU OID that matches your snmpsim files (laLoad.1 / laLoad.2 exist)
+        cpu_oids = [
+            "1.3.6.1.4.1.2021.11.10.0",  # laLoad.1 - present in public.snmprec
+            "1.3.6.1.4.1.2021.11.11.0",  # laLoad.2 - fallback
+            "1.3.6.1.4.1.2021.11.9.0",   # older attempted OID - fallback
+        ]
+        mem_oid = "1.3.6.1.4.1.2021.4.6.0"   # available memory in KB (your snmpsim)
+        uptime_oid = "1.3.6.1.2.1.1.3.0"     # SysUpTime (TimeTicks: hundredths of a second)
 
         def safe_cast(val, cast, default=None):
             try:
+                if val is None:
+                    return default
                 return cast(val)
             except Exception:
                 return default
 
-        # FIXED: use uptime_seconds to match DB schema (was previously uptime_secs / mismatch)
+        # Try CPU OIDs in order until we get a non-None value
+        cpu = None
+        for oid in cpu_oids:
+            cpu_val = snmp_get(device_ip, oid)
+            if cpu_val is not None:
+                cpu = safe_cast(cpu_val, float, None)
+                break
+
+        # Memory
+        mem = snmp_get(device_ip, mem_oid)
+
+        # Uptime: SNMP timeticks are hundredths of a second -> convert to seconds
+        uptime_ticks = snmp_get(device_ip, uptime_oid)
+        uptime_seconds = None
+        if uptime_ticks is not None:
+            t = safe_cast(uptime_ticks, int, None)
+            if t is not None:
+                uptime_seconds = int(t / 100)
+
+        # Ensure numeric values (do not return None to avoid response validation errors)
+        cpu_pct_val = 0.0 if cpu is None else float(cpu)
+        memory_pct_val = 0.0 if mem is None else safe_cast(mem, float, 0.0)
+        uptime_seconds_val = 0 if uptime_seconds is None else int(uptime_seconds)
+
         row = {
             "device_ip": device_ip,
-            "cpu_pct": safe_cast(cpu, float),
-            "memory_pct": safe_cast(mem, float),
-            "uptime_seconds": safe_cast(uptime, int),
+            "cpu_pct": cpu_pct_val,
+            "memory_pct": memory_pct_val,
+            "uptime_seconds": uptime_seconds_val,
         }
 
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # FIXED: placeholders count must match params (was 4 placeholders but 5 params)
         cur.execute(
             """
             INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)

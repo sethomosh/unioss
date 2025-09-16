@@ -1,4 +1,7 @@
 # backend/utils/snmp_client.py
+import os
+import re
+
 from pysnmp.hlapi import (
     SnmpEngine,
     CommunityData,
@@ -13,9 +16,22 @@ import logging
 import time
 import re
 
+SNMP_OVERRIDE_HOST = os.getenv("SNMP_HOST") or os.getenv("SNMP_TARGET")
+SNMP_TIMEOUT = int(os.getenv("SNMP_TIMEOUT", "2"))    
+SNMP_RETRIES = int(os.getenv("SNMP_RETRIES", "3"))
+
+
 logger = logging.getLogger(__name__)
 
 _NO_INSTANCE_STRS = ("No Such Instance", "No Such Object", "noSuchInstance", "noSuchObject")
+
+
+def _resolve_host(host):
+    """If SNMP_OVERRIDE_HOST set, use it instead of the passed host.
+       Keeps backward compatibility during local testing with snmpsim.
+    """
+    return SNMP_OVERRIDE_HOST if SNMP_OVERRIDE_HOST else host
+
 
 
 def parse_snmp_target(raw_target: str, default_port: int = 161) -> tuple[str, int]:
@@ -53,11 +69,11 @@ def parse_snmp_target(raw_target: str, default_port: int = 161) -> tuple[str, in
 
 
 def make_udp_transport_target(raw_target: str, default_port: int = 161, timeout: int = 1, retries: int = 3):
-    # import inside function to avoid top-level import failures on some pysnmp versions
     from pysnmp.hlapi import UdpTransportTarget
+    raw_target = _resolve_host(raw_target)
     host, port = parse_snmp_target(raw_target, default_port=default_port)
+    logger.debug("UDP transport target -> %s:%s (timeout=%s, retries=%s)", host, port, timeout, retries)
     return UdpTransportTarget((host, port), timeout=timeout, retries=retries)
-
 
 def _normalize_value(val):
     if val is None:
@@ -84,7 +100,29 @@ def _numeric_oid_from_name(name_pretty: str) -> str:
     return name_pretty.split("::")[-1]
 
 
-def snmp_get(host: str, community: str, oid: str, port: int = 161, timeout: int = 2, retries: int = 1):
+def snmp_get(host: str, community: str = None, oid: str = None, port: int = None, timeout: int = None, retries: int = None):
+    """
+    Backwards-compatible snmp_get:
+      - callers can call snmp_get(host, community, oid)  (new)
+      - OR call snmp_get(host, oid) (old); community will be taken from env SNMP_COMMUNITY or 'public'
+    """
+    # handle defaults
+    timeout = SNMP_TIMEOUT if timeout is None else timeout
+    retries = SNMP_RETRIES if retries is None else retries
+    # honor SNMP_PORT env when caller didn't pass port
+    if port is None:
+        try:
+            port = int(os.getenv("SNMP_PORT", "161"))
+        except Exception:
+            port = 161
+    # backward-compat: if oid is None we assume caller used (host, oid)
+    if oid is None:
+        oid = community
+        community = os.getenv("SNMP_COMMUNITY", "public")
+
+    # resolve host override for local testing (e.g., SNMP_HOST=snmpsim)
+    host = _resolve_host(host)
+
     try:
         transport = make_udp_transport_target(host, default_port=port, timeout=timeout, retries=retries)
     except ValueError as e:
@@ -109,7 +147,19 @@ def snmp_get(host: str, community: str, oid: str, port: int = 161, timeout: int 
     raise Exception("SNMP GET: no varBinds returned")
 
 
-def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
+def snmp_walk(host, community=None, base_oid=None, port=None, timeout=None, retries=None):
+    timeout = SNMP_TIMEOUT if timeout is None else timeout
+    retries = SNMP_RETRIES if retries is None else retries
+
+    if base_oid is None and community is None:
+        raise ValueError("snmp_walk requires base_oid (and optional community).")
+    # support old callers snmp_walk(host, base_oid)
+    if base_oid is None:
+        base_oid = community
+        community = os.getenv("SNMP_COMMUNITY", "public")
+
+    host = _resolve_host(host)
+
     try:
         transport = make_udp_transport_target(host, default_port=port, timeout=timeout, retries=retries)
     except ValueError as e:
@@ -133,14 +183,24 @@ def snmp_walk(host, community, base_oid, port=161, timeout=2, retries=1):
             yield (_numeric_oid_from_name(name.prettyPrint()), _normalize_value(val))
 
 
-def snmp_get_bulk(
-    host: str,
-    community: str,
-    oids: list[str],
-    port: int = 161,
-    timeout: int = 2,
-    retries: int = 1
-) -> dict:
+def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = None, timeout: int = None, retries: int = None) -> dict:
+    # default values and host override
+    timeout = SNMP_TIMEOUT if timeout is None else timeout
+    retries = SNMP_RETRIES if retries is None else retries
+
+    # allow community omitted as second arg (compat)
+    if isinstance(community, list):  # unlikely but safe-guard
+        # caller used (host, oids)
+        oids = community
+        community = os.getenv("SNMP_COMMUNITY", "public")
+
+    host = _resolve_host(host)
+    
+    logger.debug("snmp_get_bulk target host=%s port=%s community=%s oids=%s timeout=%s retries=%s",
+             host, port, community, oids, timeout, retries)
+
+
+
     attempt, delay = 0, 1
     last_error = None
 
@@ -148,6 +208,7 @@ def snmp_get_bulk(
         types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
         try:
             transport = make_udp_transport_target(host, default_port=port, timeout=timeout, retries=0)
+            logger.debug("creating UdpTransportTarget to %s:%s (timeout=%s retries=%s)", host, port, timeout, retries)
             iterator = getCmd(
                 SnmpEngine(),
                 CommunityData(community, mpModel=1),
