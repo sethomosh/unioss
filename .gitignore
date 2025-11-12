@@ -44,3 +44,8 @@ snmp-sim/data/*.bak*
 *.snmprec.strip_bak
 snmp-sim/data_quarantine_*/
 
+# snmprec test/utility scripts
+fix_*.py
+apply_snmprec_fix.py
+regen_snmprec.py
+snmp-sim/data.disabled/
