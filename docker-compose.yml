@@ -48,11 +48,11 @@ services:
         condition: service_healthy
     volumes:
       - logs-data:/app/logs:rw
-      - ./backend:/app/backend:ro
+      - ./:/app:rw
     command: >
       sh -c "
         /usr/local/bin/wait-for-it.sh --timeout=60 db:3306 -- &&
-        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000
       "
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -109,10 +109,12 @@ services:
 
   poller:
     build: .
-    command: python -u -m backend.poller --real
+    command: python -u -m backend.poller --interval 5
     env_file:
       - .env
     environment:
+      UNISYS_MODE: fake
+      UNISYS_POLL_INTERVAL: "5"
       SNMP_TARGET: snmpsim
       SNMP_HOST: snmpsim
       SNMP_PORT: "1161"

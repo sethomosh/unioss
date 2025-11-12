@@ -15,7 +15,6 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
 # shared models (single source of truth)
@@ -69,26 +68,22 @@ app.include_router(alerts_module.router, prefix="/api/alerts", tags=["alerts"])
 
 @app.on_event("startup")
 async def startup_event():
-    """
-    Run background pollers on startup:
-      - demo metrics for localhost
-      - real SNMP devices if configured
-    """
-    # demo localhost devices
-    asyncio.create_task(_poll_devices(["127.0.0.1"], interval=10))
+    if os.getenv("UNISYS_DEV", "0") == "1":
+        # demo localhost devices (dev only)
+        asyncio.create_task(_poll_devices(["127.0.0.1"], interval=int(os.getenv("UNISYS_DEMO_INTERVAL","10"))))
 
-    # example SNMP devices list (can be dynamic/configured)
-    snmp_devices_env = os.getenv("UNISYS_SNMP_DEVICES", "192.168.1.10,192.168.1.11")
-    snmp_devices = [x.strip() for x in snmp_devices_env.split(",") if x.strip()]
-    if snmp_devices:
-        asyncio.create_task(
-            poll_snmp_devices(
-                snmp_devices,
-                interval=int(os.getenv("UNISYS_SNMP_INTERVAL", "30")),
-                community=os.getenv("UNISYS_SNMP_COMMUNITY", "public")
+        snmp_devices_env = os.getenv("UNISYS_SNMP_DEVICES", "")
+        snmp_devices = [x.strip() for x in snmp_devices_env.split(",") if x.strip()]
+        if snmp_devices:
+            asyncio.create_task(
+                poll_snmp_devices(
+                    snmp_devices,
+                    interval=int(os.getenv("UNISYS_SNMP_INTERVAL", "30")),
+                    community=os.getenv("UNISYS_SNMP_COMMUNITY", "public")
+                )
             )
-        )
-
+    else:
+        logger.info("startup_event: demo pollers disabled (UNISYS_DEV != 1).")
 
 origins = [
     "http://localhost:5173",  # Vite default
@@ -153,7 +148,6 @@ except Exception as e:
     _mysql_pool = None
 
 
-client = TestClient(app)
 
 # -----------------------
 # async device polling
@@ -196,16 +190,25 @@ async def _poll_devices(devices: list, interval: int = 10):
         # --- insert to API endpoints ---
         try:
             if perf_payload:
-                client.post("/api/performance/bulk", json=perf_payload)
+                perf_q = """
+                    INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
+                    VALUES (%s, %s, %s, %s, %s)
+                """
+                perf_params = [
+                    (p["device_ip"], p["cpu_pct"], p["memory_pct"], p["uptime_seconds"], p["timestamp"])
+                    for p in perf_payload
+                ]
+                run_query(perf_q, params=perf_params, fetch=False, commit=True, many=True)
+
             if traffic_payload:
-                client.post("/api/traffic/bulk", json=traffic_payload)
+                # save_traffic_metrics expects list[dict] and can accept datetime objects
+                save_traffic_metrics(traffic_payload)
+
             logger.info("Inserted demo metrics: %d perf, %d traffic", len(perf_payload), len(traffic_payload))
         except Exception as e:
             logger.error("Error inserting demo metrics: %s", e)
 
         await asyncio.sleep(interval)
-
-
 async def poll_snmp_devices(devices: list, interval: int = 10, community: str = "public"):
     """
     Poll actual SNMP devices and save results.
@@ -224,7 +227,7 @@ async def poll_snmp_devices(devices: list, interval: int = 10, community: str = 
                         "outbound_kbps": float(traffic_metrics.get("outOctets", 0)),
                         "in_errors": int(traffic_metrics.get("inErrors", 0)),
                         "out_errors": int(traffic_metrics.get("outErrors", 0)),
-                        "last_updated": int(time.time())
+                        "timestamp": datetime.utcnow()
                     }]
                     # save via DAO (should be safe)
                     save_traffic_metrics(rows)
@@ -263,7 +266,7 @@ async def poll_traffic_loop():
             })
 
         try:
-            client.post("/api/traffic/bulk", json=metrics_payload)
+            save_traffic_metrics(metrics_payload)
             logger.info("Inserted %d demo traffic rows", len(metrics_payload))
         except Exception as e:
             logger.error("Error inserting demo traffic: %s", e)
@@ -289,7 +292,15 @@ async def poll_performance_loop():
             })
 
         try:
-            client.post("/api/performance/bulk", json=metrics_payload)
+            perf_q = """
+                INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            perf_params = [
+                (p["device_ip"], p["cpu_pct"], p["memory_pct"], p["uptime_seconds"], p["timestamp"])
+                for p in metrics_payload
+            ]
+            run_query(perf_q, params=perf_params, fetch=False, commit=True, many=True)
             logger.info("Inserted %d demo performance rows", len(metrics_payload))
         except Exception as e:
             logger.error("Error inserting demo performance: %s", e)
@@ -298,15 +309,20 @@ async def poll_performance_loop():
 
 
 # --- SNMP polling helper (RENAMED) ---
-def snmp_get_traffic_metrics(device_ip, community, oid):
+def snmp_get_traffic_metrics(device_ip, community, oid, port: Optional[int] = None):
     """
-    SNMP helper — renamed to avoid colliding with the /traffic endpoint name.
-    Returns a dict of OID -> value (strings).
+    SNMP helper — returns dict of OID -> value (strings).
+    uses SNMP_PORT env when provided, or given port param.
     """
+    try:
+        snmp_port = int(port or os.getenv("SNMP_PORT", "161"))
+    except Exception:
+        snmp_port = 161
+
     iterator = getCmd(
         SnmpEngine(),
         CommunityData(community),
-        UdpTransportTarget((device_ip, 161)),
+        UdpTransportTarget((device_ip, snmp_port)),
         ContextData(),
         ObjectType(ObjectIdentity(oid))
     )
@@ -422,6 +438,22 @@ def health_check():
         redis_ok = False
     return {"status": {"db": "ok" if db_ok else "down", "redis": "ok" if redis_ok else "down"}}
 
+@app.get("/health")
+def root_health():
+    # simple liveness for docker healthchecks
+    db_ok, redis_ok = True, True
+    try:
+        run_query("SELECT 1", fetch=False)
+    except Exception:
+        db_ok = False
+    if redis_client:
+        try:
+            redis_client.ping()
+        except Exception:
+            redis_ok = False
+    else:
+        redis_ok = False
+    return {"status": {"db": "ok" if db_ok else "down", "redis": "ok" if redis_ok else "down"}}
 
 # --- Pydantic models for API (left here as DTOs) ---
 class PerformanceMetricIn(BaseModel):

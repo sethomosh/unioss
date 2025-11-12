@@ -34,7 +34,7 @@ def _resolve_host(host):
 
 
 
-def parse_snmp_target(raw_target: str, default_port: int = 161) -> tuple[str, int]:
+def parse_snmp_target(raw_target: str, default_port: int | None = 161) -> tuple[str, int]:
     if not raw_target:
         raise ValueError("empty SNMP target")
 
@@ -43,7 +43,7 @@ def parse_snmp_target(raw_target: str, default_port: int = 161) -> tuple[str, in
         raise ValueError(f"SNMP target looks like a placeholder: {rt!r}")
 
     host = rt
-    port = default_port
+    port = default_port or 161  # hard fallback
 
     if "@" in rt:
         host, port_part = rt.split("@", 1)
@@ -58,7 +58,11 @@ def parse_snmp_target(raw_target: str, default_port: int = 161) -> tuple[str, in
         try:
             port = int(port_part)
         except Exception:
-            port = default_port
+            port = default_port or 161
+
+    # final fallback before conversion
+    if port is None:
+        port = default_port or 161
 
     try:
         socket.getaddrinfo(host, None)
@@ -68,10 +72,14 @@ def parse_snmp_target(raw_target: str, default_port: int = 161) -> tuple[str, in
     return host, int(port)
 
 
-def make_udp_transport_target(raw_target: str, default_port: int = 161, timeout: int = 1, retries: int = 3):
+def make_udp_transport_target(raw_target: str, default_port: int | None = 161, timeout: int = 1, retries: int = 3):
     from pysnmp.hlapi import UdpTransportTarget
     raw_target = _resolve_host(raw_target)
-    host, port = parse_snmp_target(raw_target, default_port=default_port)
+    # ensure valid default_port
+    print(f"[DEBUG] make_udp_transport_target: raw_target={raw_target!r}, default_port={default_port!r}, timeout={timeout}, retries={retries}")
+    if default_port is None or not isinstance(default_port, (int, float)):
+        default_port = 161
+    host, port = parse_snmp_target(raw_target, default_port=int(default_port or 161))
     logger.debug("UDP transport target -> %s:%s (timeout=%s, retries=%s)", host, port, timeout, retries)
     return UdpTransportTarget((host, port), timeout=timeout, retries=retries)
 
@@ -98,6 +106,7 @@ def _numeric_oid_from_name(name_pretty: str) -> str:
     if m:
         return m.group(1)
     return name_pretty.split("::")[-1]
+
 
 
 def snmp_get(host: str, community: str = None, oid: str = None, port: int = None, timeout: int = None, retries: int = None):
@@ -147,7 +156,7 @@ def snmp_get(host: str, community: str = None, oid: str = None, port: int = None
     raise Exception("SNMP GET: no varBinds returned")
 
 
-def snmp_walk(host, community=None, base_oid=None, port=None, timeout=None, retries=None):
+def snmp_walk(host, community=None, base_oid=None, port=1161, timeout=None, retries=None):
     timeout = SNMP_TIMEOUT if timeout is None else timeout
     retries = SNMP_RETRIES if retries is None else retries
 
@@ -183,7 +192,7 @@ def snmp_walk(host, community=None, base_oid=None, port=None, timeout=None, retr
             yield (_numeric_oid_from_name(name.prettyPrint()), _normalize_value(val))
 
 
-def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = None, timeout: int = None, retries: int = None) -> dict:
+def snmp_get_bulk(host: str, community: str, oids: list[str], port: int = 1161, timeout: int = None, retries: int = None) -> dict:
     # default values and host override
     timeout = SNMP_TIMEOUT if timeout is None else timeout
     retries = SNMP_RETRIES if retries is None else retries
