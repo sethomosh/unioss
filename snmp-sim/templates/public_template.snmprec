@@ -1,0 +1,28 @@
+# public_template.snmprec
+# placeholders: {IP}, {SYSNAME}, {VENDOR}, {COMMUNITY}
+# sysDescr/sysName
+1.3.6.1.2.1.1.1.0 = STRING: "{VENDOR} simulated device {SYSNAME} ({IP})"
+1.3.6.1.2.1.1.5.0 = STRING: "{SYSNAME}"
+1.3.6.1.2.1.1.6.0 = STRING: "site-{IP}"
+1.3.6.1.2.1.1.4.0 = STRING: "ops@example.net"
+
+
+# uptime
+1.3.6.1.2.1.1.3.0|@uptime|
+
+
+# cpu (example gauge from HOST-RESOURCES-MIB)
+1.3.6.1.2.1.25.3.3.1.2.1 = Gauge32: @variate(1,100,1)
+
+
+# memory sample (total-used-ish) - use Gauge32
+1.3.6.1.4.1.2021.4.6.0 = Gauge32: @variate(100000,800000,1024)
+
+
+# vendor-specific counters example (wireless clients for ubnt)
+# use a simple variate; script can keep vendor field for additional customizations
+1.3.6.1.4.1.41112.1.1.1.0 = INTEGER: @variate(0,200,1)
+
+
+# placeholder for interface block - replaced or appended by generator
+{IF_TABLE}

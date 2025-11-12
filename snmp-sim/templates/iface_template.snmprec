@@ -1,0 +1,6 @@
+# iface_template.snmprec
+# header for ifTable section
+# ifTable will be inserted at {IF_TABLE} or appended after this file
+# (the generator will create per-index lines like 1.3.6.1.2.1.2.2.1.2.<index> etc.)
+{IF_TABLE}
+# end of iface template

@@ -1,0 +1,29 @@
+ip,sysname,vendor,if_count,community
+# subnet 10.0.1.x (tower 1) - 8 devices
+10.0.1.11,tower1-rm1-01,ubnt,6,public
+10.0.1.12,tower1-rm1-02,ubnt,4,public
+10.0.1.13,tower1-rm1-03,ubnt,6,public
+10.0.1.14,tower1-edge-01,mikrotik,8,public
+10.0.1.15,tower1-edge-02,mikrotik,6,public
+10.0.1.16,tower1-core-01,cisco,10,public
+10.0.1.17,tower1-ap-01,ubnt,3,public
+10.0.1.18,tower1-ap-02,ubnt,3,public
+
+
+# subnet 10.0.2.x (tower 2) - 7 devices
+10.0.2.11,tower2-rm1-01,ubnt,6,public
+10.0.2.12,tower2-rm1-02,ubnt,4,public
+10.0.2.13,tower2-edge-01,mikrotik,8,public
+10.0.2.14,tower2-edge-02,mikrotik,6,public
+10.0.2.15,tower2-core-01,cisco,10,public
+10.0.2.16,tower2-ap-01,ubnt,3,public
+10.0.2.17,tower2-ap-02,ubnt,3,public
+
+
+# subnet 10.0.3.x (tower 3) - 6 devices
+10.0.3.11,tower3-rm1-01,ubnt,6,public
+10.0.3.12,tower3-rm1-02,ubnt,4,public
+10.0.3.13,tower3-edge-01,mikrotik,8,public
+10.0.3.14,tower3-edge-02,mikrotik,6,public
+10.0.3.15,tower3-ap-01,ubnt,3,public
+10.0.3.16,tower3-ap-02,ubnt,3,public
