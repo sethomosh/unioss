@@ -8,11 +8,22 @@
 # Virtual environments
 /.venv/
 /venv/
+venv/
+.venv/
+ENV/
+env/
+.venv310/
+.venv/*
 
 # Python bytecode & pytest cache
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.pyo
+*.pyd
+*.pyc
+*.pdb
+.Python
 
 # Docker and env files
 *.pid
