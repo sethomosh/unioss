@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { apiService } from '../services/apiService';
 import { Device, PerformanceMetrics, Session, Alert, SNMPData } from '../types/types';
 import { Link } from 'react-router-dom';
+import TowerWidget from '../components/TowerWidget';
 
 export const DevicesPage: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -136,6 +137,9 @@ export const DevicesPage: React.FC = () => {
   return (
     <div className="space-y-6 w-full">
       <h1 className="text-xl font-bold text-foreground">Devices</h1>
+
+      {/* tower overview widget */}
+      <TowerWidget />
 
       {/* Devices Table - Fixed dark theme */}
       <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">

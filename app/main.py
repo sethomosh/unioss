@@ -876,6 +876,50 @@ def cache_set(key, value, ttl=CACHE_TTL):
         return
     redis_client.set(key, json.dumps(value, default=str), ex=ttl)
 
+
+@app.get("/api/towers/overview")
+def towers_overview():
+    try:
+        # get discovery/devices (reuse your discovery SQL) - light-weight version
+        devices = run_query("""
+            SELECT p.device_ip, COALESCE(d.hostname, p.device_ip) AS hostname
+            FROM performance_metrics p
+            LEFT JOIN discovery_table d ON d.device_ip = p.device_ip
+            JOIN (
+              SELECT device_ip, MAX(timestamp) AS ts FROM performance_metrics GROUP BY device_ip
+            ) m ON p.device_ip = m.device_ip AND p.timestamp = m.ts
+        """, fetch=True, dict_cursor=True) or []
+
+        # group by hostname pattern 'tower'
+        towers = {}
+        for d in devices:
+            hn = (d.get("hostname") or "").lower()
+            import re
+            m = re.search(r"(tower[\s-]?\d+)", hn)
+            name = m.group(1) if m else "ungrouped"
+            towers.setdefault(name, []).append(d["device_ip"])
+
+        out = []
+        for name, ips in towers.items():
+            # aggregate perf
+            q = """
+                SELECT AVG(cpu_pct) as avg_cpu
+                FROM performance_metrics p
+                JOIN (
+                  SELECT device_ip, MAX(timestamp) AS ts FROM performance_metrics WHERE device_ip IN ({placeholders}) GROUP BY device_ip
+                ) latest ON latest.device_ip = p.device_ip AND p.timestamp = latest.ts
+            """
+            placeholders = ",".join(["%s"]*len(ips))
+            rows = run_query(q.format(placeholders=placeholders), tuple(ips), fetch=True, dict_cursor=True)
+            avg_cpu = rows[0]["avg_cpu"] if rows else None
+            # you can add avg rssi from signal_metrics similarly
+            out.append({"name": name, "device_ips": ips, "avg_cpu": avg_cpu})
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 @app.get("/api/dashboard/{device_ip}", response_model=DeviceDashboard)
 def get_device_dashboard(device_ip: str):
     cached = cache_get(f"dashboard:{device_ip}")

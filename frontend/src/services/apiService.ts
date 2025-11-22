@@ -73,6 +73,89 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
   });
 }
 
+// returns array of { name: string, device_count: number, devices: Device[] }
+async function getTowers(): Promise<{ name: string; devices: Device[] }[]> {
+  // reuse cached discovery list to avoid extra network I/O
+  const devices = await apiService.getDevices();
+  // determine tower name: prefer explicit tower field, else hostname starting with 'tower'
+  const map = new Map<string, Device[]>();
+  for (const d of devices) {
+    const hn = (d.hostname || '').toString();
+    let towerName = d['tower'] ?? null;
+    if (!towerName) {
+      const m = hn.match(/^(tower\s*\d+|tower-\d+|tower\d+)/i);
+      if (m) towerName = m[0];
+    }
+    if (!towerName) towerName = 'ungrouped';
+    if (!map.has(towerName)) map.set(towerName, []);
+    map.get(towerName)!.push(d);
+  }
+  return Array.from(map.entries()).map(([name, devs]) => ({ name, devices: devs }));
+}
+
+// aggregated overview for a tower (lazy loads details for devices)
+async function getTowerOverview(towerName: string, batchSize = 8) {
+  const towers = await getTowers();
+  const tower = towers.find(t => t.name === towerName);
+  if (!tower) return null;
+
+  // batched lazy fetch details for devices in the tower (cached)
+  const detailResults: any[] = [];
+  for (let i = 0; i < tower.devices.length; i += batchSize) {
+    const batch = tower.devices.slice(i, i + batchSize).map(d =>
+      cachedRequest(`device::${d.device_ip}`, () => apiService.getDeviceDetails(d.device_ip))
+    );
+    // wait for this batch to finish before starting the next one
+    // this keeps the browser and backend from being flooded
+    // if one device detail fails, cachedRequest will throw - we catch and push null for resiliency
+    // (we intentionally keep batch failures non-fatal for the overview)
+    // eslint-disable-next-line no-await-in-loop
+    const resolved = await Promise.all(batch.map(p => p.catch(() => null)));
+    detailResults.push(...resolved);
+  }
+  const details = detailResults;
+
+  // aggregate
+  const counts = { total: 0, up: 0, down: 0 };
+  let cpuSum = 0, cpuCnt = 0, rssiSum = 0, rssiCnt = 0;
+  const trafficSpark: { ts: string; throughput: number }[] = []; // small array of { ts, throughput }
+
+  for (const [i, d] of tower.devices.entries()) {
+    const det = details[i];
+    counts.total += 1;
+    const status = (d.status ?? (d.online ? 'up' : 'down')) as string;
+    if (status === 'up') counts.up += 1;
+    else counts.down += 1;
+
+    if (det?.snapshot?.cpu_pct != null) { cpuSum += Number(det.snapshot.cpu_pct); cpuCnt++; }
+    // top-level signal or snapshot.signal
+    const sig = det?.signal ?? det?.snapshot?.signal ?? d.signal ?? null;
+    if (sig && sig.rssi_dbm != null) { rssiSum += Number(sig.rssi_dbm); rssiCnt++; }
+
+    // traffic sparkline: use traffic_history of each device, sum inbound_kbps per timestamp
+    if (Array.isArray(det?.traffic_history) && det.traffic_history.length) {
+      const N = 12;
+      const samples = det.traffic_history.slice(0, N).reverse(); // oldest -> newest
+      for (let j = 0; j < samples.length; j++) {
+        const s = samples[j];
+        const ts = s.timestamp || String(j);
+        const throughput = Number(s.inbound_kbps || 0) + Number(s.outbound_kbps || 0);
+        const idx = trafficSpark.findIndex(t => t.ts === ts);
+        if (idx === -1) trafficSpark.push({ ts, throughput });
+        else trafficSpark[idx].throughput += throughput;
+      }
+    }
+  }
+
+  const avgCpu = cpuCnt ? cpuSum / cpuCnt : null;
+  const avgRssi = rssiCnt ? rssiSum / rssiCnt : null;
+
+  // normalize sparkline array sorted by ts
+  trafficSpark.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  return { towerName, counts, avgCpu, avgRssi, trafficSpark, devices: tower.devices, details };
+}
+
+
 // Mock data
 const mockData = {
   devices: [
@@ -408,5 +491,9 @@ export const apiService = {
     if (!resp.ok) throw new Error(`Failed to fetch device details: ${resp.statusText}`);
     return resp.json();
   });
-  }
+  },
+  // tower helpers (added)
+  getTowers,
+  getTowerOverview,
+
 };
