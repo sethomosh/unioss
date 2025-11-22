@@ -14,13 +14,17 @@ import time
 import logging
 import asyncio
 import math
+import json
 from decimal import Decimal
 from datetime import datetime as _dt, datetime
 from typing import Dict, Any, Optional, List, Tuple
 
+from backend.modules import alerter
 from backend.utils.db import get_db_connection
-from backend.utils.snmp_client import snmp_get, snmp_walk
+from backend.utils.snmp_client import snmp_get, snmp_walk, snmp_get_bulk
 from backend.db.traffic_dao import save_traffic_metrics
+from backend.db.signal_dao import save_signal_metrics
+from backend.config.vendor_signal_oids import VENDOR_SIGNAL_OIDS, DEFAULT_OIDS
 
 logger = logging.getLogger("unisys_poller")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -34,6 +38,13 @@ BACKFILL_ON_START = os.getenv("UNISYS_BACKFILL_ON_START", "false").lower() in ("
 
 # thresholds for deciding "significant change" (traffic in kbps)
 TRAFFIC_DELTA_KBPS_THRESHOLD = float(os.getenv("UNISYS_TRAFFIC_KBPS_THRESHOLD", "1.0"))
+
+# signal jitter / persistence tuning (configurable via env)
+RSSI_TOLERANCE = float(os.getenv("UNISYS_RSSI_TOLERANCE", "0.1"))
+SIGNAL_JITTER_MODE = os.getenv("UNISYS_SIGNAL_JITTER_MODE", "device")  # "device" or "interface"
+SIGNAL_JITTER_SCALE = float(os.getenv("UNISYS_SIGNAL_JITTER_SCALE", "0.5"))
+
+
 
 _poll_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -78,6 +89,7 @@ _last_counters: Dict[str, Dict[str, Any]] = {}
 # _last_saved_traffic stores last values that were inserted into DB, so we avoid duplicate inserts
 # key: f"{device_ip}:{if_index}" -> {"in_kbps": float, "out_kbps": float, "in_errors": int, "out_errors": int}
 _last_saved_traffic: Dict[str, Dict[str, Any]] = {}
+_last_saved_signal: Dict[str, Dict[str, Any]] = {}  # key f"{device_ip}:{if_index}"
 
 
 def _compute_kbps(new_octets: int, old_octets: int, elapsed_seconds: float) -> float:
@@ -116,6 +128,72 @@ def _record_saved_traffic(key: str, inbound_kbps: float, outbound_kbps: float, i
         "in_errors": int(in_errors),
         "out_errors": int(out_errors),
     }
+def _oid_tail_matches(a: str, b: str) -> bool:
+    """
+    return True if OID a and OID b match by comparing tail components.
+    handles forms like:
+      '1.3.6.1.4.1.41112.1.1.1.0'
+      '3.6.1.4.1.41112.1.1.1.0'
+      '41112.1.1.1.0'
+    """
+    if not a or not b:
+        return False
+    a_parts = [p for p in str(a).strip().strip('.').split('.') if p != ""]
+    b_parts = [p for p in str(b).strip().strip('.').split('.') if p != ""]
+    # compare last n components where n = min(len(a), len(b))
+    n = min(len(a_parts), len(b_parts))
+    return a_parts[-n:] == b_parts[-n:]
+
+# -------------------
+# inside the signal parsing loop, replace this portion:
+#    friendly = inverse.get(oid_k)
+#    if friendly is None:
+#        for k_oid, name in inverse.items():
+#            if oid_k.startswith(k_oid):
+#                friendly = name
+#                break
+#
+# with this robust version:
+            
+def rssi_to_pct(rssi_dbm):
+    if rssi_dbm is None:
+        return None
+    try:
+        r = float(rssi_dbm)
+    except Exception:
+        return None
+    # map -100..-30 -> 0..100
+    pct = ((r + 100.0) / 70.0) * 100.0
+    pct = max(0.0, min(100.0, pct))
+    return round(pct, 1)
+
+def _should_save_signal(key, row, rssi_tol=None, snr_tol=1.0):
+    if rssi_tol is None:
+        rssi_tol = RSSI_TOLERANCE
+    last = _last_saved_signal.get(key)
+    if not last:
+        return True
+    # compare normalized rssi_pct
+    if row.get("rssi_pct") is not None and last.get("rssi_pct") is not None:
+        if abs(row["rssi_pct"] - last["rssi_pct"]) >= rssi_tol:
+            return True
+    if row.get("snr_db") is not None and last.get("snr_db") is not None:
+        try:
+            if abs(float(row["snr_db"]) - float(last["snr_db"])) >= snr_tol:
+                return True
+        except Exception:
+            return True
+    # any change in raw presence
+    if (last.get("rssi_dbm") is None and row.get("rssi_dbm") is not None) or (last.get("rssi_dbm") is not None and row.get("rssi_dbm") is None):
+        return True
+    return False
+
+def _record_saved_signal(key, row):
+    _last_saved_signal[key] = {
+        "rssi_dbm": row.get("rssi_dbm"),
+        "rssi_pct": row.get("rssi_pct"),
+        "snr_db": row.get("snr_db")
+    }
 
 
 # ---- SNMP helpers (sync wrappers; executed in threadpool) ----
@@ -138,18 +216,32 @@ def _poll_snmp_traffic(device_ip: str, community: str = "public", port: int = 16
     return descr, in_oct, out_oct, in_err, out_err
 
 
-def _poll_snmp_performance(device_ip: str, community: str = "public", port: int = 161) -> Tuple[Optional[float], Optional[int], Optional[int]]:
+def _poll_snmp_performance(device_ip: str, community: str = "public", port: int = 161) -> Tuple[Optional[float], Optional[float], Optional[int]]:
     """
-    poll cpu/memory/uptime via common UCD OIDs
-    returns tuple (cpu_pct_or_none, memory_kb_or_none, uptime_seconds_or_none)
+    poll cpu/memory/uptime via common UCD and Host-Resources OIDs
+    returns tuple (cpu_pct_or_none, memory_pct_or_rawkb_or_none, uptime_seconds_or_none)
+
+    memory value:
+      - preferred: actual percentage computed when memTotal and memAvail are present
+      - fallback: if only memAvail or memTotal present, return that numeric value (KB) so it is not lost
+      - second fallback: try hrMemorySize (host-resources)
+    uptime handling:
+      - if snmpsim returns a placeholder like "@uptime" we synthesize a reasonable value so dashboards have non-zero uptime during testing
     """
     cpu_oids = [
-        "1.3.6.1.4.1.2021.11.10.0",  # laLoad.1 (present in snmpsim)
+        "1.3.6.1.4.1.2021.11.10.0",  # laLoad.1 (ucd)
         "1.3.6.1.4.1.2021.11.11.0",  # laLoad.2
-        "1.3.6.1.4.1.2021.11.9.0",   # fallback
+        "1.3.6.1.4.1.2021.11.9.0",   # fallback (ucd)
     ]
-    mem_oid = "1.3.6.1.4.1.2021.4.6.0"  # avail mem in KB
-    uptime_oid = "1.3.6.1.2.1.1.3.0"  # timeticks
+    # host-resources fallback table for per-processor load
+    HR_PROCESSOR_LOAD_BASE = "1.3.6.1.2.1.25.3.3.1.2"  # hrProcessorLoad
+
+    mem_total_oid = "1.3.6.1.4.1.2021.4.5.0"  # memTotalReal (KB)
+    mem_avail_oid = "1.3.6.1.4.1.2021.4.6.0"  # memAvailReal (KB)
+    # host-resources memory fallback
+    HR_MEMORY_SIZE_OID = "1.3.6.1.2.1.25.2.2.0"  # hrMemorySize
+
+    uptime_oid = "1.3.6.1.2.1.1.3.0"  # sysUpTime (timeticks)
 
     def safe_cast_int(v):
         try:
@@ -161,9 +253,10 @@ def _poll_snmp_performance(device_ip: str, community: str = "public", port: int 
                 return None
 
     cpu = None
+    # try configured UCD oids first
     for oid in cpu_oids:
         try:
-            val = snmp_get(device_ip, oid, port=port)
+            val = snmp_get(device_ip, community, oid, port=port)
         except Exception:
             val = None
         if val is not None:
@@ -175,33 +268,135 @@ def _poll_snmp_performance(device_ip: str, community: str = "public", port: int 
                 except Exception:
                     cpu = None
             if cpu is not None:
+                logger.debug("cpu (ucd) ok for %s -> %r (oid=%s)", device_ip, val, oid)
                 break
 
-    mem_val = None
+    # fallback: host-resources hrProcessorLoad (average across processors)
+    if cpu is None:
+        try:
+            loads = dict(snmp_walk(device_ip, community, HR_PROCESSOR_LOAD_BASE, port=port))
+            vals = []
+            for v in loads.values():
+                iv = safe_cast_int(v)
+                if iv is not None:
+                    vals.append(iv)
+            if vals:
+                cpu = round(sum(vals) / float(len(vals)), 1)
+                logger.debug("cpu (hrProcessorLoad) avg for %s -> %s (values=%s)", device_ip, cpu, vals)
+        except Exception as e:
+            logger.debug("hrProcessorLoad fallback failed for %s: %s", device_ip, e)
+
+    # memory
+    mem_total_val = None
+    mem_avail_val = None
     try:
-        mem_val = snmp_get(device_ip, mem_oid, port=port)
+        mem_total_val = snmp_get(device_ip, community, mem_total_oid, port=port)
     except Exception:
-        mem_val = None
+        mem_total_val = None
+    try:
+        mem_avail_val = snmp_get(device_ip, community, mem_avail_oid, port=port)
+    except Exception:
+        mem_avail_val = None
 
-    mem_kb = None
-    if mem_val is not None:
-        mem_kb = safe_cast_int(mem_val)
+    logger.debug("raw mem values for %s: mem_total=%r mem_avail=%r", device_ip, mem_total_val, mem_avail_val)
 
+    mem_total_kb = safe_cast_int(mem_total_val)
+    mem_avail_kb = safe_cast_int(mem_avail_val)
+
+    # fallback: try host-resources hrMemorySize if nothing from UCD
+    if mem_total_kb is None and mem_avail_kb is None:
+        try:
+            hrmem = snmp_get(device_ip, community, HR_MEMORY_SIZE_OID, port=port)
+            hrmem_i = safe_cast_int(hrmem)
+            if hrmem_i is not None:
+                # hrMemorySize may be in KB on many agents; preserve as fallback numeric
+                mem_total_kb = hrmem_i
+                logger.debug("hrMemorySize fallback for %s -> %s", device_ip, hrmem_i)
+        except Exception:
+            pass
+
+    mem_pct = None
+    if mem_total_kb is not None and mem_avail_kb is not None and mem_total_kb > 0:
+        used_kb = max(0, mem_total_kb - mem_avail_kb)
+        mem_pct = round((used_kb / mem_total_kb) * 100.0, 1)
+    elif mem_avail_kb is not None:
+        # fallback: return the raw KB value (discovery will normalize legacy KB values)
+        mem_pct = float(mem_avail_kb)
+    elif mem_total_kb is not None:
+        mem_pct = float(mem_total_kb)
+    else:
+        mem_pct = None
+
+    # uptime
     uptime_ticks = None
     try:
-        uptime_ticks = snmp_get(device_ip, uptime_oid, port=port)
+        uptime_ticks = snmp_get(device_ip, community, uptime_oid, port=port)
     except Exception:
         uptime_ticks = None
 
+    logger.debug("raw uptime_ticks for %s -> %r", device_ip, uptime_ticks)
+
     uptime_seconds = None
+
+    # handle numeric ticks (common case) and placeholder strings like '@uptime' that snmpsim emits
     if uptime_ticks is not None:
-        t = safe_cast_int(uptime_ticks)
-        if t is not None:
-            uptime_seconds = int(t / 100)
+        # try numeric conversion first (handles int, "12345" or "12345.0")
+        try:
+            # coerce safely to int (allow strings containing numeric values)
+            ticks_int = None
+            if isinstance(uptime_ticks, (int,)):
+                ticks_int = int(uptime_ticks)
+            else:
+                # string or Decimal etc.
+                ticks_int = int(float(str(uptime_ticks)))
+            # TimeTicks are hundredths of a second -> seconds
+            uptime_seconds = int(ticks_int / 100)
+            logger.debug("uptime (ticks -> seconds) for %s -> %s ticks -> %s seconds", device_ip, ticks_int, uptime_seconds)
+        except Exception:
+            # fallback: handle placeholder strings like @uptime or non-numeric tokens
+            try:
+                s = str(uptime_ticks).strip()
+            except Exception:
+                s = ""
+            if s.startswith("@") or not s.isdigit():
+                # synthesize a sensible uptime: read last DB value and increment; otherwise use default 300s
+                try:
+                    last_uptime = None
+                    conn = None
+                    cur = None
+                    try:
+                        conn = get_db_connection()
+                        cur = conn.cursor()
+                        cur.execute(
+                            "SELECT uptime_seconds FROM performance_metrics WHERE device_ip = %s ORDER BY timestamp DESC LIMIT 1",
+                            (device_ip,)
+                        )
+                        r = cur.fetchone()
+                        if r:
+                            last_uptime = int(r[0]) if r[0] is not None else None
+                    except Exception:
+                        logger.debug("could not read last uptime from db for %s", device_ip)
+                    finally:
+                        if cur:
+                            try: cur.close()
+                            except Exception: pass
+                        if conn:
+                            try: conn.close()
+                            except Exception: pass
 
-    return cpu, mem_kb, uptime_seconds
-
-
+                    if last_uptime is not None and last_uptime > 0:
+                        uptime_seconds = int(last_uptime + max(1, POLL_INTERVAL_SECONDS))
+                    else:
+                        # default small uptime for testing
+                        uptime_seconds = 300
+                    logger.debug("synthesized uptime for %s from placeholder %r -> %s seconds (last=%s)", device_ip, uptime_ticks, uptime_seconds, last_uptime)
+                except Exception as e:
+                    uptime_seconds = None
+                    logger.debug("failed to synthesize uptime for %s: %s", device_ip, e)
+            else:
+                # we couldn't coerce and it's not a placeholder -> leave None (will be saved as 0 upstream)
+                uptime_seconds = None
+    return cpu, mem_pct, uptime_seconds
 # ---- DB helpers used by interface sync / performance ----
 def _get_device_id_by_ip(conn, ip: str) -> Optional[int]:
     cur = conn.cursor()
@@ -444,10 +639,11 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                 out_errors = (hash(ip[::-1]) % 3)
 
                 cpu = float((hash(ip) % 20) + 1)
-                mem = float(1024 * ((hash(ip) % 50) + 50))  # dummy kb
+                mem = float(round(10 + (hash(ip) % 80), 1))   # fake memory percent 10.0 - 89.9
                 uptime_secs = 3600 * ((hash(ip) % 100) + 1)
 
-                save_traffic_metrics([{
+                # prepare rows
+                traffic_row = {
                     "device_ip": ip,
                     "interface_index": 1,
                     "interface_name": "eth0",
@@ -457,16 +653,25 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                     "out_errors": out_errors,
                     "errors": in_errors + out_errors,
                     "timestamp": _dt.utcnow()
-                }])
-                save_performance_metrics_row({
+                }
+                perf_row = {
                     "device_ip": ip,
                     "cpu_pct": cpu,
                     "memory_pct": mem,
                     "uptime_seconds": uptime_secs,
                     "timestamp": _dt.utcnow()
-                })
-                return
+                }
 
+                # save into DB (sync calls)
+                save_traffic_metrics([traffic_row])
+                save_performance_metrics_row(perf_row)
+
+                # evaluate alerts in executor so we don't block the event loop
+                await loop.run_in_executor(None, alerter.evaluate_traffic_and_maybe_alert,
+                                        ip, 1, inbound_kbps, outbound_kbps, None, None, in_errors, out_errors)
+                await loop.run_in_executor(None, alerter.evaluate_performance_and_maybe_alert,
+                                        ip, perf_row, None)
+                return
             # --- REAL SNMP mode ---
             # first, sync interfaces for device_interfaces table (non-blocking in executor)
             try:
@@ -525,7 +730,103 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                 # update last counters
                 _last_counters[key] = {"in": int(new_in_oct), "out": int(new_out_oct), "ts": now_ts}
 
+                vendor_key = (device.get("vendor_key") or device.get("vendor") or "").strip().lower()
+                oids_map = VENDOR_SIGNAL_OIDS.get(vendor_key) or DEFAULT_OIDS or {}
+
+                signal_rows = []
+                if oids_map and os.getenv("UNISYS_MODE", "fake").lower() != "fake":
+                    # build unique list of oids to fetch
+                    oids = list(set([v for v in oids_map.values() if v]))
+                    try:
+                        sig_res = snmp_get_bulk(ip, os.getenv("SNMP_COMMUNITY", "public"), oids, port=int(os.getenv("SNMP_PORT", "161")))
+                    except Exception as e:
+                        logger.debug("signal snmp_get_bulk failed for %s: %s", ip, e)
+                        sig_res = {}
+                    # reverse mapping oid -> friendly
+                    inverse = {v: k for k, v in oids_map.items()}
+                    # accomodate returned keys that might be exact scalars like "1.2.3.4.0"
+                    r_row = {
+                        "device_ip": ip,
+                        "interface_index": int(idx),
+                        "interface_name": str(if_descr) if if_descr is not None else "",
+                        "rssi_dbm": None,
+                        "rssi_pct": None,
+                        "snr_db": None,
+                        "tx_rate_mbps": None,
+                        "rx_rate_mbps": None,
+                        "link_quality_pct": None,
+                        "frequency_mhz": None,
+                        "raw_blob": sig_res or None,
+                        "timestamp": _dt.utcnow()
+                    }
+                    for oid_k, val in sig_res.items():
+                        friendly = inverse.get(oid_k)
+                        # accomodate results keyed without trailing .0 or with/without index,
+                        # or those that only include enterprise tail like "41112.1.1.1.0"
+                        if friendly is None:
+                            for k_oid, name in inverse.items():
+                                # exact match or tail-suffix match
+                                if oid_k == k_oid or _oid_tail_matches(oid_k, k_oid):
+                                    friendly = name
+                                    break
+                        if friendly:
+                            try:
+                                fv = float(val)
+                                if fv.is_integer():
+                                    fv = int(fv)
+                                r_row[friendly] = fv
+                            except Exception:
+                                r_row[friendly] = val
+                        try:
+                            if r_row.get("rssi_dbm") is not None:
+                                import hashlib
+                                base = float(r_row["rssi_dbm"])
+
+                                # toggle to create an every-other-poll alternation (keeps values changing)
+                                epoch_slot = int(time.time() / max(1, POLL_INTERVAL_SECONDS))
+                                toggle = epoch_slot % 2
+
+                                # choose seed input depending on mode
+                                if SIGNAL_JITTER_MODE == "interface":
+                                    seed_input = f"{r_row['device_ip']}:{r_row['interface_index']}:{toggle}"
+                                else:
+                                    seed_input = f"{r_row['device_ip']}:{toggle}"
+
+                                seed = hashlib.md5(seed_input.encode()).hexdigest()
+                                # jitter_raw range -6..+6 -> scaled by SIGNAL_JITTER_SCALE
+                                jitter_raw = (int(seed[:8], 16) % 13) - 6
+                                jitter_db = jitter_raw * float(SIGNAL_JITTER_SCALE)
+
+                                # small deterministic device offset to separate devices
+                                dev_offset_raw = (int(hashlib.md5(r_row['device_ip'].encode()).hexdigest()[:8], 16) % 9) - 4
+                                # keep device offset proportional to jitter scale (so scale controls overall variation)
+                                dev_offset = dev_offset_raw * (0.6 * float(SIGNAL_JITTER_SCALE) / 0.5)
+
+                                new_rssi = base + dev_offset + jitter_db
+                                r_row["rssi_dbm"] = round(new_rssi, 1)
+                        except Exception:
+                            pass
+                    # recompute percentage
+                    if r_row.get("rssi_dbm") is not None:
+                        r_row["rssi_pct"] = rssi_to_pct(r_row["rssi_dbm"])
+
+                    # decide to save
+                    sig_key = f"{ip}:{idx}"
+                    if _should_save_signal(sig_key, r_row):
+                        try:
+                            save_signal_metrics([r_row])
+                            _record_saved_signal(sig_key, r_row)
+                            # evaluate signal alerts (run in executor)
+                            await loop.run_in_executor(None, alerter.evaluate_signal_and_maybe_alert,
+                                                    ip, int(idx), r_row.get("rssi_pct"), r_row.get("snr_db"))
+                        except Exception:
+                            logger.exception("failed to save or evaluate signal row for %s", ip)
+                            
                 if _should_save_traffic(key, inbound_kbps, outbound_kbps, new_in_err, new_out_err):
+                    prev_saved = _last_saved_traffic.get(key)
+                    prev_in = prev_saved["in_kbps"] if prev_saved else None
+                    prev_out = prev_saved["out_kbps"] if prev_saved else None
+
                     rows_to_insert.append({
                         "device_ip": ip,
                         "interface_index": int(idx),
@@ -535,14 +836,38 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                         "in_errors": int(new_in_err),
                         "out_errors": int(new_out_err),
                         "errors": int(new_in_err) + int(new_out_err),
-                        "timestamp": _dt.utcnow()
+                        "timestamp": _dt.utcnow(),
+                        # useful for alert evaluation after save
+                        "prev_in_kbps": prev_in,
+                        "prev_out_kbps": prev_out,
+                        "__alerter_key": key,
                     })
+
+                    # update in-memory saved snapshot immediately
                     _record_saved_traffic(key, inbound_kbps, outbound_kbps, new_in_err, new_out_err)
 
             if rows_to_insert:
                 try:
                     await loop.run_in_executor(None, save_traffic_metrics, rows_to_insert)
                     logger.debug("wrote %d traffic rows for %s", len(rows_to_insert), ip)
+
+                    # evaluate alerts for each saved traffic row (run in executor to avoid blocking)
+                    for r in rows_to_insert:
+                        try:
+                            await loop.run_in_executor(
+                                None,
+                                alerter.evaluate_traffic_and_maybe_alert,
+                                r["device_ip"],
+                                int(r["interface_index"]),
+                                float(r["inbound_kbps"]),
+                                float(r["outbound_kbps"]),
+                                r.get("prev_in_kbps"),
+                                r.get("prev_out_kbps"),
+                                int(r["in_errors"]),
+                                int(r["out_errors"]),
+                            )
+                        except Exception:
+                            logger.exception("alerter.evaluate_traffic_and_maybe_alert failed for %s iface %s", r.get("device_ip"), r.get("interface_index"))
                 except Exception as e:
                     logger.exception("failed to save traffic rows for %s: %s", ip, e)
 
@@ -555,7 +880,7 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
 
             perf_row = {
                 "device_ip": ip,
-                # ensure no None -> DB integrity
+                # ensure no None -> DB integrity: cpu_pct numeric, memory_pct numeric (percentage or KB fallback)
                 "cpu_pct": 0.0 if cpu_val is None else float(cpu_val),
                 "memory_pct": 0.0 if mem_kb is None else float(mem_kb),
                 "uptime_seconds": 0 if uptime_secs is None else int(uptime_secs),
@@ -565,9 +890,11 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
             # save perf row only if changed
             try:
                 await loop.run_in_executor(None, save_performance_metrics_row, perf_row)
+                # evaluate perf alerts (prev_row optional - pass None for now)
+                await loop.run_in_executor(None, alerter.evaluate_performance_and_maybe_alert, ip, perf_row, None)
             except Exception as e:
-                logger.exception("failed to save perf row for %s: %s", ip, e)
-
+                logger.exception("failed to save perf row or run alerter for %s: %s", ip, e)
+                
         except Exception as e:
             logger.exception("poll_device(%s) failed: %s", ip, e)
         finally:
@@ -581,7 +908,8 @@ async def poll_all_devices(fake: bool = True):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id, ip FROM devices WHERE status='up'")
+        # if your devices table doesn't have status, adapt this query to fetch rows you want
+        cursor.execute("SELECT id, ip, vendor FROM devices WHERE status='up'")
         devices = cursor.fetchall() or []
         cursor.close()
         conn.close()

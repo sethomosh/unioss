@@ -2,6 +2,12 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 import datetime
 
+class Signal(BaseModel):
+    rssi_dbm: Optional[float] = None
+    rssi_pct: Optional[float] = None
+    snr_db: Optional[float] = None
+    timestamp: Optional[datetime.datetime] = None
+
 class Alert(BaseModel):
     id: int
     device_ip: str
@@ -15,6 +21,7 @@ class InterfaceSnapshot(BaseModel):
     inbound_kbps: float
     outbound_kbps: float
     errors: int
+    signal: Optional[Signal] = None   
 
 class DeviceSnapshot(BaseModel):
     device_ip: str
@@ -31,6 +38,9 @@ class DeviceSnapshot(BaseModel):
     os_version: Optional[str] = None
     status: Optional[str] = None
     error: Optional[str] = None
+
+    # new: top-level latest signal convenience
+    signal: Optional[Signal] = None
 
 class Session(BaseModel):
     id: int

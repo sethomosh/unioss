@@ -9,9 +9,21 @@ router = APIRouter()
 logger = logging.getLogger("performance")
 
 
-@router.get("/performance/{device_ip}")
+@router.get("/{device_ip}")
 def read_performance(device_ip: str):
+    """
+    API endpoint: immediately polls a device once and returns the stored row.
+    """
     return get_performance_metrics(device_ip)
+
+
+def _safe_cast(val, cast, default=None):
+    try:
+        if val is None:
+            return default
+        return cast(val)
+    except Exception:
+        return default
 
 
 def get_performance_metrics(device_ip: str):
@@ -20,54 +32,87 @@ def get_performance_metrics(device_ip: str):
     Returns the inserted row as a dict (or None if failed).
     """
     try:
-        # Pick the CPU OID that matches your snmpsim files (laLoad.1 / laLoad.2 exist)
+        # CPU OIDs (progressive fallback)
         cpu_oids = [
-            "1.3.6.1.4.1.2021.11.10.0",  # laLoad.1 - present in public.snmprec
-            "1.3.6.1.4.1.2021.11.11.0",  # laLoad.2 - fallback
-            "1.3.6.1.4.1.2021.11.9.0",   # older attempted OID - fallback
+            "1.3.6.1.4.1.2021.11.10.0",  # laLoad.1  (our snmpsim has this)
+            "1.3.6.1.4.1.2021.11.11.0",  # laLoad.2
+            "1.3.6.1.4.1.2021.11.9.0",   # older fallback
         ]
-        mem_oid = "1.3.6.1.4.1.2021.4.6.0"   # available memory in KB (your snmpsim)
-        uptime_oid = "1.3.6.1.2.1.1.3.0"     # SysUpTime (TimeTicks: hundredths of a second)
 
-        def safe_cast(val, cast, default=None):
-            try:
-                if val is None:
-                    return default
-                return cast(val)
-            except Exception:
-                return default
+        # UCD memory OIDs
+        mem_total_oid = "1.3.6.1.4.1.2021.4.5.0"   # memTotalReal (KB)
+        mem_avail_oid = "1.3.6.1.4.1.2021.4.6.0"   # memAvailReal (KB)
 
-        # Try CPU OIDs in order until we get a non-None value
+        # Uptime OID
+        uptime_oid = "1.3.6.1.2.1.1.3.0"  # TimeTicks
+
+        # --------------------------
+        # CPU
+        # --------------------------
         cpu = None
         for oid in cpu_oids:
-            cpu_val = snmp_get(device_ip, oid)
+            try:
+                cpu_val = snmp_get(device_ip, oid)
+            except Exception:
+                cpu_val = None
+
             if cpu_val is not None:
-                cpu = safe_cast(cpu_val, float, None)
+                cpu = _safe_cast(cpu_val, float, None)
                 break
 
+        # --------------------------
         # Memory
-        mem = snmp_get(device_ip, mem_oid)
+        # --------------------------
+        try:
+            mem_total = snmp_get(device_ip, mem_total_oid)
+        except Exception:
+            mem_total = None
 
-        # Uptime: SNMP timeticks are hundredths of a second -> convert to seconds
-        uptime_ticks = snmp_get(device_ip, uptime_oid)
-        uptime_seconds = None
-        if uptime_ticks is not None:
-            t = safe_cast(uptime_ticks, int, None)
-            if t is not None:
-                uptime_seconds = int(t / 100)
+        try:
+            mem_avail = snmp_get(device_ip, mem_avail_oid)
+        except Exception:
+            mem_avail = None
 
-        # Ensure numeric values (do not return None to avoid response validation errors)
-        cpu_pct_val = 0.0 if cpu is None else float(cpu)
-        memory_pct_val = 0.0 if mem is None else safe_cast(mem, float, 0.0)
-        uptime_seconds_val = 0 if uptime_seconds is None else int(uptime_seconds)
+        mem_total_kb = _safe_cast(mem_total, int, None)
+        mem_avail_kb = _safe_cast(mem_avail, int, None)
+
+        if mem_total_kb is not None and mem_avail_kb is not None and mem_total_kb > 0:
+            used_kb = max(0, mem_total_kb - mem_avail_kb)
+            memory_pct_value = round((used_kb / mem_total_kb) * 100.0, 1)
+        elif mem_avail_kb is not None:
+            # fallback: store as-is (KB); discovery will later clamp
+            memory_pct_value = float(mem_avail_kb)
+        elif mem_total_kb is not None:
+            memory_pct_value = float(mem_total_kb)
+        else:
+            memory_pct_value = 0.0
+
+        # --------------------------
+        # Uptime (TimeTicks -> seconds)
+        # --------------------------
+        try:
+            uptime_ticks = snmp_get(device_ip, uptime_oid)
+        except Exception:
+            uptime_ticks = None
+
+        uptime_ticks = _safe_cast(uptime_ticks, int, None)
+        uptime_seconds_value = int(uptime_ticks / 100) if uptime_ticks is not None else 0
+
+        # --------------------------
+        # Prepare row for DB
+        # --------------------------
+        cpu_pct_value = 0.0 if cpu is None else float(cpu)
 
         row = {
             "device_ip": device_ip,
-            "cpu_pct": cpu_pct_val,
-            "memory_pct": memory_pct_val,
-            "uptime_seconds": uptime_seconds_val,
+            "cpu_pct": cpu_pct_value,
+            "memory_pct": memory_pct_value,
+            "uptime_seconds": uptime_seconds_value,
         }
 
+        # --------------------------
+        # Insert into DB
+        # --------------------------
         conn = get_db_connection()
         cur = conn.cursor()
 
@@ -76,8 +121,15 @@ def get_performance_metrics(device_ip: str):
             INSERT INTO performance_metrics (device_ip, cpu_pct, memory_pct, uptime_seconds, timestamp)
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (row["device_ip"], row["cpu_pct"], row["memory_pct"], row["uptime_seconds"], datetime.utcnow()),
+            (
+                row["device_ip"],
+                row["cpu_pct"],
+                row["memory_pct"],
+                row["uptime_seconds"],
+                datetime.utcnow(),
+            ),
         )
+
         conn.commit()
         cur.close()
         conn.close()

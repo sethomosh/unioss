@@ -1,6 +1,6 @@
 // src/pages/DevicesPage.tsx - Fixed dark theme and improved styling
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { apiService } from '../services/apiService';
 import { Device, PerformanceMetrics, Session, Alert, SNMPData } from '../types/types';
 import { Link } from 'react-router-dom';
@@ -19,6 +19,9 @@ export const DevicesPage: React.FC = () => {
   const [snmpLoading, setSnmpLoading] = useState(false);
   const [snmpError, setSnmpError] = useState<string | null>(null);
 
+  const mountedRef = useRef(true);
+  const pollersRef = useRef<{ [k: string]: number | null }>({});
+
   const commonOIDs = [
     { name: 'SysDescr', oid: '1.3.6.1.2.1.1.1.0' },
     { name: 'SysUpTime', oid: '1.3.6.1.2.1.1.3.0' },
@@ -32,11 +35,13 @@ export const DevicesPage: React.FC = () => {
     setSnmpError(null);
     try {
       const result = await apiService.getSNMPData(deviceIp, oid);
+      if (!mountedRef.current) return;
       setSnmpResult(result);
     } catch (err: unknown) {
+      if (!mountedRef.current) return;
       setSnmpError(err instanceof Error ? err.message : 'SNMP GET failed');
     } finally {
-      setSnmpLoading(false);
+      if (mountedRef.current) setSnmpLoading(false);
     }
   };
 
@@ -45,43 +50,79 @@ export const DevicesPage: React.FC = () => {
     setSnmpError(null);
     try {
       const result = await apiService.walkSNMP(deviceIp, oid);
+      if (!mountedRef.current) return;
       setSnmpResult(result);
     } catch (err: unknown) {
+      if (!mountedRef.current) return;
       setSnmpError(err instanceof Error ? err.message : 'SNMP WALK failed');
     } finally {
-      setSnmpLoading(false);
+      if (mountedRef.current) setSnmpLoading(false);
     }
   };
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [devs, sess, perf, al] = await Promise.all([
-          apiService.getDevices(),
-          apiService.getSessions(),
-          apiService.getPerformance(),
-          apiService.getAlerts(),
-        ]);
+  const loadAllOnce = useCallback(async () => {
+    try {
+      const [devs, sess, perf, al] = await Promise.all([
+        apiService.getDevices(),
+        apiService.getSessions(),
+        apiService.getPerformance(),
+        apiService.getAlerts(),
+      ]);
 
-        setDevices(devs || []);
-        setSessions(sess || []);
+      if (!mountedRef.current) return;
 
-        const perfMap: Record<string, PerformanceMetrics> = {};
-        (perf || []).forEach(p => {
-          if (p.device_ip) perfMap[p.device_ip] = p;
-        });
-        setPerformance(perfMap);
+      setDevices(devs || []);
+      setSessions(sess || []);
 
-        setAlerts(al || []);
-      } catch (err) {
-        console.error('Error loading device data:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
+      const perfMap: Record<string, PerformanceMetrics> = {};
+      (perf || []).forEach(p => {
+        if (p.device_ip) perfMap[p.device_ip] = p;
+      });
+      setPerformance(perfMap);
 
-    loadData();
+      setAlerts(al || []);
+    } catch (err) {
+      // keep minimal, log for debugging
+      // eslint-disable-next-line no-console
+      console.error('Error loading device data:', err);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    // run initial load immediately
+    loadAllOnce();
+
+    // polling intervals: tune to your backend cadence
+    // devices + performance + alerts: 5s
+    pollersRef.current.devices = window.setInterval(() => {
+      if (document.hidden) return;
+      apiService.getDevices().then(d => { if (mountedRef.current) setDevices(d || []); }).catch(() => {});
+      apiService.getPerformance().then(p => {
+        if (!mountedRef.current) return;
+        const perfMap: Record<string, PerformanceMetrics> = {};
+        (p || []).forEach(item => { if (item.device_ip) perfMap[item.device_ip] = item; });
+        setPerformance(perfMap);
+      }).catch(() => {});
+      apiService.getAlerts().then(a => { if (mountedRef.current) setAlerts(a || []); }).catch(() => {});
+    }, 5000);
+
+    // sessions: less frequent (8s)
+    pollersRef.current.sessions = window.setInterval(() => {
+      if (document.hidden) return;
+      apiService.getSessions().then(s => { if (mountedRef.current) setSessions(s || []); }).catch(() => {});
+    }, 8000);
+
+    return () => {
+      mountedRef.current = false;
+      // clear intervals
+      if (pollersRef.current.devices) clearInterval(pollersRef.current.devices as number);
+      if (pollersRef.current.sessions) clearInterval(pollersRef.current.sessions as number);
+    };
+  }, [loadAllOnce]);
 
   const getLatestSessionForDevice = (ip: string): Session | null => {
     const ds = sessions.filter(s => s.device_ip === ip && s.start_time);
@@ -102,22 +143,24 @@ export const DevicesPage: React.FC = () => {
           <table className="min-w-full">
             <thead className="bg-muted border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">IP</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hostname</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Vendor</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">OS</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Seen</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">CPU %</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Memory %</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Sessions</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Auth</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Auth User</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Auth Time</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Details</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Alerts</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">ip</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">hostname</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">vendor</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">os</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">last seen</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">cpu %</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">memory %</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">signal</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">sessions</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">last auth</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">auth user</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">auth time</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">details</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">alerts</th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-border">
               {devices.map(dev => {
                 const perf = performance[dev.device_ip];
@@ -168,6 +211,13 @@ export const DevicesPage: React.FC = () => {
                         const memVal = (perf && typeof perf.memory_pct === 'number') ? perf.memory_pct
                           : (typeof dev.memory_pct === 'number' ? dev.memory_pct : null);
                         return memVal !== null && memVal !== undefined ? memVal.toFixed(1) : '—';
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-foreground">
+                      {(() => {
+                        // prefer canonical device.signal.rssi_dbm, but support legacy keys
+                        const sigDbm = dev.signal?.rssi_dbm ?? (dev as any).rssi_dbm ?? (dev as any).rssi ?? null;
+                        return sigDbm !== null && sigDbm !== undefined ? `${sigDbm} dBm` : '—';
                       })()}
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">{devSessions.length}</td>

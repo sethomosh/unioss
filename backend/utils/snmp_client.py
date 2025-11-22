@@ -19,6 +19,8 @@ import re
 SNMP_OVERRIDE_HOST = os.getenv("SNMP_HOST") or os.getenv("SNMP_TARGET")
 SNMP_TIMEOUT = int(os.getenv("SNMP_TIMEOUT", "2"))    
 SNMP_RETRIES = int(os.getenv("SNMP_RETRIES", "3"))
+SNMP_FORCE_OVERRIDE = str(os.getenv("SNMP_FORCE_OVERRIDE", "")).lower() in ("1", "true", "yes")
+
 
 
 logger = logging.getLogger(__name__)
@@ -27,11 +29,36 @@ _NO_INSTANCE_STRS = ("No Such Instance", "No Such Object", "noSuchInstance", "no
 
 
 def _resolve_host(host):
-    """If SNMP_OVERRIDE_HOST set, use it instead of the passed host.
-       Keeps backward compatibility during local testing with snmpsim.
-    """
-    return SNMP_OVERRIDE_HOST if SNMP_OVERRIDE_HOST else host
 
+    if SNMP_FORCE_OVERRIDE and SNMP_OVERRIDE_HOST:
+        return SNMP_OVERRIDE_HOST
+
+    """
+    prefer the explicit host argument. only fall back to SNMP_OVERRIDE_HOST when:
+      - the caller passed an empty/None host, OR
+      - the caller passed a clear local placeholder (common during local dev)
+        such as 'snmpsim', 'localhost', or loopback addresses.
+    this prevents an unconditional env override (which breaks polling real IPs).
+
+    if SNMP_FORCE_OVERRIDE env is set (1/true/yes) then ALWAYS return SNMP_OVERRIDE_HOST
+    when SNMP_OVERRIDE_HOST is configured — useful for local testing with snmpsim.
+    """
+    if os.getenv("SNMP_FORCE_OVERRIDE", "false").lower() in ("1", "true", "yes"):
+        # explicit test-mode override
+        return SNMP_OVERRIDE_HOST or host
+
+    if not host or str(host).strip() == "":
+        return SNMP_OVERRIDE_HOST or host
+
+    # normalize for comparison
+    h_low = str(host).strip().lower()
+    if SNMP_OVERRIDE_HOST:
+        # allow env override when caller explicitly targeted a local placeholder
+        if h_low in ("snmpsim", "snmp-sim", "localhost", "127.0.0.1", "0.0.0.0"):
+            return SNMP_OVERRIDE_HOST
+
+    # otherwise prefer the explicit host passed by caller
+    return host
 
 
 def parse_snmp_target(raw_target: str, default_port: int | None = 161) -> tuple[str, int]:
@@ -76,10 +103,20 @@ def make_udp_transport_target(raw_target: str, default_port: int | None = 161, t
     from pysnmp.hlapi import UdpTransportTarget
     raw_target = _resolve_host(raw_target)
     # ensure valid default_port
-    print(f"[DEBUG] make_udp_transport_target: raw_target={raw_target!r}, default_port={default_port!r}, timeout={timeout}, retries={retries}")
+
     if default_port is None or not isinstance(default_port, (int, float)):
         default_port = 161
     host, port = parse_snmp_target(raw_target, default_port=int(default_port or 161))
+    # try to resolve to a concrete ipv4 address to avoid odd hostname/v6 behavior in pysnmp
+    try:
+        resolved_ip = socket.gethostbyname(host)
+        if resolved_ip and resolved_ip != host:
+            logger.debug("resolved host %s -> %s", host, resolved_ip)
+            host = resolved_ip
+    except Exception:
+        # resolution failed — fall back to the original host string
+        logger.debug("could not resolve host %s to ip (continuing with original)", host)
+ 
     logger.debug("UDP transport target -> %s:%s (timeout=%s, retries=%s)", host, port, timeout, retries)
     return UdpTransportTarget((host, port), timeout=timeout, retries=retries)
 
@@ -100,13 +137,38 @@ def _normalize_value(val):
             return m.group(1)
     return s
 
+def _normalize_blob_keys(blob: dict):
+    norm = {}
+    for k,v in blob.items():
+        s = str(k).strip()
+        if re.match(r'^\d+(\.\d+)*$', s) and not s.startswith('1.3.6.1'):
+            # treat as tail like "41112.1.1.1.0" -> prepend enterprise prefix
+            norm_key = '1.3.6.1.4.1.' + s if not s.startswith('1.3.6.1.4.1') else s
+        else:
+            norm_key = s
+        norm[norm_key] = v
+    return norm
 
 def _numeric_oid_from_name(name_pretty: str) -> str:
-    m = re.search(r'(\d+(?:\.\d+)+)', name_pretty)
+    """
+    try to extract a stable numeric OID string.
+    prefer substring starting at '1.3.6.1.4.1' (enterprise prefix) if present;
+    otherwise fall back to the first numeric sequence found.
+    """
+    if not name_pretty:
+        return ""
+    s = str(name_pretty)
+    # prefer full enterprise OID if present
+    idx = s.find("1.3.6.1.4.1")
+    if idx != -1:
+        # return starting from enterprise prefix
+        return s[idx:].strip()
+    # fallback to any numeric run like '3.6.1.4.1.41112.1.1.1.0' or '41112.1.1.1.0'
+    m = re.search(r'(\d+(?:\.\d+)+)', s)
     if m:
         return m.group(1)
-    return name_pretty.split("::")[-1]
-
+    # last fallback
+    return s.split("::")[-1]
 
 
 def snmp_get(host: str, community: str = None, oid: str = None, port: int = None, timeout: int = None, retries: int = None):

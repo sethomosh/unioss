@@ -15,6 +15,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi import Request
 from pydantic import BaseModel, Field
 
 # shared models (single source of truth)
@@ -25,6 +27,7 @@ from backend.utils.db import run_query
 
 # backend modules
 from backend.modules import alerts as alerts_module
+from backend.modules import signals as signals_module
 from backend.modules.alerts import insert_alert
 from backend.modules import performance as performance_module
 from backend.modules import traffic as traffic_module
@@ -64,7 +67,13 @@ app = FastAPI(title="Unified Network System")
 app.include_router(performance_module.router, prefix="/api/performance", tags=["performance"])
 app.include_router(traffic_module.router, prefix="/api/traffic", tags=["traffic"])
 app.include_router(alerts_module.router, prefix="/api/alerts", tags=["alerts"])
+app.include_router(signals_module.router, prefix="/api/signals", tags=["signals"])
 
+@app.get("/signals")
+def signals_redirect(request: Request):
+    # preserve querystring by simply redirecting to the api prefix
+    qs = str(request.query_params)
+    return RedirectResponse(f"/api/signals{'?' + qs if qs else ''}")
 
 @app.on_event("startup")
 async def startup_event():
@@ -341,7 +350,64 @@ def snmp_get_traffic_metrics(device_ip, community, oid, port: Optional[int] = No
         for varBind in varBinds:
             metrics[str(varBind[0])] = str(varBind[1])
         return metrics
+def _format_signal_row(row):
+    if not row:
+        return None
+    try:
+        return {
+            "rssi_dbm": float(row.get("rssi_dbm")) if row.get("rssi_dbm") is not None else None,
+            "rssi_pct": float(row.get("rssi_pct")) if row.get("rssi_pct") is not None else None,
+            "snr_db": float(row.get("snr_db")) if row.get("snr_db") is not None else None,
+            "timestamp": _format_ts_for_client(row.get("timestamp"))
+        }
+    except Exception:
+        # best-effort conversion
+        return {
+            "rssi_dbm": row.get("rssi_dbm"),
+            "rssi_pct": row.get("rssi_pct"),
+            "snr_db": row.get("snr_db"),
+            "timestamp": _format_ts_for_client(row.get("timestamp"))
+        }
 
+def get_latest_signals_map(device_ips: Optional[List[str]] = None):
+    """
+    returns dict { device_ip: { rssi_dbm, rssi_pct, snr_db, timestamp } }
+    if device_ips is provided, restricts to those device_ips.
+    """
+    try:
+        if device_ips:
+            # build placeholders
+            placeholders = ",".join(["%s"] * len(device_ips))
+            q = f"""
+            SELECT s.device_ip, s.rssi_dbm, s.rssi_pct, s.snr_db, s.timestamp
+            FROM signal_metrics s
+            JOIN (
+                SELECT device_ip, MAX(timestamp) AS max_ts
+                FROM signal_metrics
+                WHERE device_ip IN ({placeholders})
+                GROUP BY device_ip
+            ) latest ON latest.device_ip = s.device_ip AND latest.max_ts = s.timestamp
+            """
+            rows = run_query(q, tuple(device_ips), fetch=True, dict_cursor=True) or []
+        else:
+            q = """
+            SELECT s.device_ip, s.rssi_dbm, s.rssi_pct, s.snr_db, s.timestamp
+            FROM signal_metrics s
+            JOIN (
+                SELECT device_ip, MAX(timestamp) AS max_ts
+                FROM signal_metrics
+                GROUP BY device_ip
+            ) latest ON latest.device_ip = s.device_ip AND latest.max_ts = s.timestamp
+            """
+            rows = run_query(q, fetch=True, dict_cursor=True) or []
+
+        out = {}
+        for r in rows:
+            out[r["device_ip"]] = r
+        return out
+    except Exception as e:
+        logger.exception("get_latest_signals_map error: %s", e)
+        return {}
 
 def poll_device(device_ip, community, oid):
     metrics = snmp_get_traffic_metrics(device_ip, community, oid)
@@ -1151,6 +1217,15 @@ def discovery_devices():
                     "outbound_kbps": row.get("outbound_kbps", 0),
                     "errors": row.get("errors", 0)
                 })
+        try:
+            device_ips = list(devices.keys())
+            if device_ips:
+                sigmap = get_latest_signals_map(device_ips)
+                for ip, dev in devices.items():
+                    sig_row = sigmap.get(ip)
+                    dev["signal"] = _format_signal_row(sig_row) if sig_row else None
+        except Exception as e:
+            logger.warning("failed to attach signals to discovery devices: %s", e)
 
         return list(devices.values())
 
@@ -1238,9 +1313,57 @@ def device_details(
             fetch=True,
             dict_cursor=True
         ) or []
+        # attach top-level latest signal for device
+        try:
+            sig_row = run_query(
+                "SELECT rssi_dbm, rssi_pct, snr_db, timestamp FROM signal_metrics WHERE device_ip=%s ORDER BY timestamp DESC LIMIT 1",
+                (device_ip,),
+                fetch=True,
+                dict_cursor=True
+            )
+            top_sig = sig_row[0] if sig_row else None
+            top_sig_obj = _format_signal_row(top_sig)
+        except Exception as e:
+            logger.exception("error fetching top-level signal for %s: %s", device_ip, e)
+            top_sig_obj = None
+
+        # attach per-interface latest signal if available (match by interface_name or interface_index)
+        try:
+            # try interface_name-based mapping first (if your signal_metrics stores interface_name)
+            per_if_map = {}
+            rows = run_query(
+                """
+                SELECT device_ip, interface_index, interface_name, rssi_dbm, rssi_pct, snr_db, timestamp
+                FROM signal_metrics s
+                JOIN (
+                    SELECT COALESCE(interface_name, interface_index) as keyname, MAX(timestamp) as max_ts
+                    FROM signal_metrics
+                    WHERE device_ip=%s
+                    GROUP BY COALESCE(interface_name, interface_index)
+                ) latest ON (COALESCE(s.interface_name, s.interface_index) = latest.keyname AND s.timestamp = latest.max_ts)
+                WHERE s.device_ip=%s
+                """,
+                (device_ip, device_ip),
+                fetch=True,
+                dict_cursor=True
+            ) or []
+            for r in rows:
+                # prefer interface_name where present, fallback to index
+                key = r.get("interface_name") or str(r.get("interface_index"))
+                per_if_map[key] = r
+        except Exception:
+            per_if_map = {}
+
+        # attach signal field to each latest_per_interface row if possible
+        for idx, row in enumerate(latest_if_rows):
+            key = row.get("interface_name") or str(row.get("interface_index", ""))
+            sig_row = per_if_map.get(key)
+            if sig_row:
+                latest_if_rows[idx]["signal"] = _format_signal_row(sig_row)
 
         return {
             "device_ip": device_ip,
+            "signal": top_sig_obj,
             "snapshot": snapshot,
             "latest_per_interface": latest_if_rows,
             "performance_history": perf_history,

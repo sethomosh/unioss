@@ -80,8 +80,10 @@ export function useSessions() {
 }
 
 // Alerts hook
-export function useAlerts() {
-  return useApiHook(() => apiService.getAlerts());
+export function useAlerts(opts?: { limit?: number; intervalMs?: number }) {
+  const limit = opts?.limit ?? 10;
+  const interval = opts?.intervalMs ?? 5000; // 5s polling by default
+  return usePolling(() => apiService.getAlerts(limit), interval);
 }
 
 // Dashboard metrics hook

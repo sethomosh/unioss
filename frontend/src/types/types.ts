@@ -10,6 +10,13 @@ export interface Interface {
   inbound_kbps?: number;
   outbound_kbps?: number;
   errors?: number;
+  signal?: Signal;
+}
+
+export interface Signal {
+  rssi_dbm?: number | null; // e.g. -67
+  rssi_pct?: number | null; // 0-100
+  snr_db?: number | null;
 }
 
 export interface Device {
@@ -172,11 +179,20 @@ export type IfRow = {
   outbound_kbps: number;
   errors: number;
   timestamp?: string;
+  signal?: Signal;
 };
 
 export type DeviceDetailsResponse = {
   device_ip: string;
-  snapshot: { cpu_pct?: number; memory_pct?: number; uptime_seconds?: number; timestamp?: string } | null;
+  snapshot: { 
+    cpu_pct?: number; 
+    memory_pct?: number; 
+    uptime_seconds?: number; 
+    timestamp?: string;
+    // allow snapshot-level signal too
+    signal?: Signal;
+  } | null;
+  signal?: Signal; // top-level convenience
   latest_per_interface: IfRow[];
   performance_history: PerfHistoryEntry[];
   traffic_history: TrafficHistoryEntry[];

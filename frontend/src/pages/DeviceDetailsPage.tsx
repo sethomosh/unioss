@@ -1,6 +1,5 @@
 // src/pages/DeviceDetailsPage.tsx
-
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import type {
@@ -18,26 +17,50 @@ export const DeviceDetailsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
 
+  const mountedRef = useRef(true);
+  const pollRef = useRef<number | null>(null);
+
   useEffect(() => {
+    mountedRef.current = true;
+
     if (!deviceIp) return;
-    const load = async () => {
+
+    const loadOnce = async () => {
       setLoading(true);
       setError(null);
       try {
-        // change: fetch device details + sessions in parallel; sessions are deduped by apiService
         const [resp, sess] = await Promise.all([
           apiService.getDeviceDetails(decodeURIComponent(deviceIp)),
           apiService.getSessions(),
         ]);
+        if (!mountedRef.current) return;
         setData(resp);
         setSessions(sess || []);
       } catch (err: unknown) {
+        if (!mountedRef.current) return;
         setError(err instanceof Error ? err.message : 'Failed to load device details');
       } finally {
-        setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
     };
-    load();
+
+    loadOnce();
+
+    // poll details every 10s (snapshot + latest per-interface are useful to refresh frequently)
+    pollRef.current = window.setInterval(() => {
+      if (document.hidden) return;
+      apiService.getDeviceDetails(decodeURIComponent(deviceIp))
+        .then(resp => { if (mountedRef.current) setData(resp); })
+        .catch(() => {});
+      apiService.getSessions()
+        .then(sess => { if (mountedRef.current) setSessions(sess || []); })
+        .catch(() => {});
+    }, 10000);
+
+    return () => {
+      mountedRef.current = false;
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [deviceIp]);
 
   if (loading) return <div className="p-6 text-center">Loading device details…</div>;
@@ -49,7 +72,7 @@ export const DeviceDetailsPage: React.FC = () => {
     .filter(s => s.device_ip === data.device_ip)
     .sort((a, b) => (b.start_time || '').localeCompare(a.start_time || ''));
 
-  // change: show latest 10 deduped events (apiService already dedupes duplicates)
+  // show latest 10 deduped events (apiService already dedupes duplicates)
   const recent = deviceSessions.slice(0, 10);
 
   return (
@@ -69,13 +92,28 @@ export const DeviceDetailsPage: React.FC = () => {
             <div><strong>CPU</strong><div>{data.snapshot.cpu_pct ?? '—'}</div></div>
             <div><strong>Memory</strong><div>{data.snapshot.memory_pct ?? '—'}</div></div>
             <div><strong>Uptime (s)</strong><div>{data.snapshot.uptime_seconds ?? '—'}</div></div>
-            <div><strong>Timestamp</strong><div>{data.snapshot.timestamp ? new Date(data.snapshot.timestamp).toLocaleString() : '—'}</div></div>
+            <div>
+              <strong>Timestamp</strong>
+              <div>{data.snapshot.timestamp ? new Date(data.snapshot.timestamp).toLocaleString() : '—'}</div>
+              <div className="mt-2 text-sm text-muted-foreground">
+                <strong>signal:</strong>
+                <div>
+                  {/* prefer snapshot.signal, fall back to top-level data.signal */}
+                  {(() => {
+                    const sig = data.snapshot?.signal ?? data.signal ?? null;
+                    if (!sig) return ' —';
+                    const dbm = sig.rssi_dbm != null ? `${sig.rssi_dbm} dBm` : '—';
+                    const pct = sig.rssi_pct != null ? ` (${sig.rssi_pct}%)` : '';
+                    return `${dbm}${pct}`;
+                  })()}
+                </div>
+              </div>
+            </div>
           </div>
         ) : (
           <div className="mt-2 text-sm text-gray-600">No snapshot available</div>
         )}
       </div>
-
       {/* Access Control / Auth History */}
       <div className="bg-white p-4 rounded shadow">
         <div className="flex items-center justify-between">

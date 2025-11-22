@@ -113,10 +113,12 @@ services:
     env_file:
       - .env
     environment:
+      UNISYS_MAX_CONCURRENT_POLLS: "4"
       UNISYS_MODE: fake
       UNISYS_POLL_INTERVAL: "5"
       SNMP_TARGET: snmpsim
       SNMP_HOST: snmpsim
+      SNMP_FORCE_OVERRIDE: "1"
       SNMP_PORT: "1161"
       SNMP_COMMUNITY: "public"
     depends_on:

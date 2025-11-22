@@ -16,6 +16,9 @@ import {
 // API config
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const USE_MOCK = import.meta.env.VITE_MOCK === 'true';
+const SHORT_TTL_MS = 7000;
+const _cache = new Map<string, { ts: number; data: any }>();
+const _inflight = new Map<string, Promise<any>>();
 
 // Retry with exponential backoff
 async function exponentialBackoff<T>(
@@ -35,6 +38,24 @@ async function exponentialBackoff<T>(
     }
   }
   throw lastError!;
+}
+
+async function cachedRequest<T>(cacheKey: string, fn: () => Promise<T>): Promise<T> {
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached as T;
+  const inflight = _inflight.get(cacheKey);
+  if (inflight) return inflight as Promise<T>;
+  const p = (async () => {
+    try {
+      const res = await fn();
+      cacheSet(cacheKey, res);
+      return res;
+    } finally {
+      _inflight.delete(cacheKey);
+    }
+  })();
+  _inflight.set(cacheKey, p);
+  return p;
 }
 
 // Generic API request wrapper
@@ -112,18 +133,54 @@ const mockData = {
 
 // Normalizer to unify backend payloads
 function normalizeDevice(d: any): Device {
+  const ipVal = d.ip ?? d.device_ip ?? d.deviceIp ?? d.device ?? 'unknown';
+  // normalize status to a simple lowercase value and prefer explicit online if present
+  const rawStatus = (d.status ?? (typeof d.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
+  const statusNormalized = rawStatus ? String(rawStatus).trim().toLowerCase() : 'unknown';
+
+  const lastSeenRaw = d.last_seen ?? d.lastSeen ?? d.timestamp ?? d.time ?? null;
+  const lastSeen = lastSeenRaw && !isNaN(Date.parse(String(lastSeenRaw))) ? String(lastSeenRaw) : null;
+
+  // signal extraction (support multiple possible backend shapes)
+  const rssi_dbm = d.rssi_dbm ?? d.rssiDbm ?? d.rssi_db ?? d.signal?.rssi_dbm ?? d.signal_dbm ?? d.rssi ?? null;
+  const rssi_pct = d.rssi_pct ?? d.rssiPct ?? d.signal?.rssi_pct ?? d.signal_pct ?? d.rssi_percent ?? null;
+  const snr_db = d.snr_db ?? d.snrDb ?? d.signal?.snr_db ?? null;
+
+  const signal = {
+    rssi_dbm: typeof rssi_dbm === 'number' ? rssi_dbm : (rssi_dbm != null ? Number(rssi_dbm) : undefined),
+    rssi_pct: typeof rssi_pct === 'number' ? rssi_pct : (rssi_pct != null ? Number(rssi_pct) : undefined),
+    snr_db: typeof snr_db === 'number' ? snr_db : (snr_db != null ? Number(snr_db) : undefined),
+  };
+
   return {
     ...d,
+    // canonical keys the rest of the app expects
+    ip: ipVal,
+    device_ip: d.device_ip ?? ipVal,
+    hostname: d.hostname ?? d.name ?? '—',
+    vendor: d.vendor ?? d.manufacturer ?? '—',
     os: d.os ?? d.os_version ?? '—',
-    hostname: d.hostname ?? '—',
-    vendor: d.vendor ?? '—',
-    status: d.status ?? (d.online != null ? (d.online ? 'up' : 'down') : 'unknown'),
-    last_seen: d.last_seen && !isNaN(Date.parse(d.last_seen))
-      ? d.last_seen
-      : (d.timestamp && !isNaN(Date.parse(d.timestamp)) ? d.timestamp : null),
-    cpu_pct: d.cpu_pct ?? null,
-    memory_pct: d.memory_pct ?? null,
-  };
+    status: statusNormalized,
+    online: typeof d.online === 'boolean' ? d.online : (statusNormalized === 'up'),
+    last_seen: lastSeen,
+    lastSeen: lastSeen, // keep camelCase copy for components expecting it
+    cpu_pct: d.cpu_pct ?? d.cpu ?? null,
+    memory_pct: d.memory_pct ?? d.memory ?? null,
+    signal,
+  } as Device;
+}
+
+function cacheGet(key: string) {
+  const e = _cache.get(key);
+  if (!e) return null;
+  if (Date.now() - e.ts > SHORT_TTL_MS) {
+    _cache.delete(key);
+    return null;
+  }
+  return e.data;
+}
+function cacheSet(key: string, data: any) {
+  _cache.set(key, { ts: Date.now(), data });
 }
 
 // small helper for ISO coercion
@@ -144,17 +201,23 @@ export const apiService = {
   // Devices
   async getDevices(): Promise<Device[]> {
     if (USE_MOCK) return mockData.devices.map(normalizeDevice);
-    const raw = await apiRequest<Device[]>('/discovery/devices');
-    return raw.map(normalizeDevice);
+    return cachedRequest('devices::list', async () => {
+      const raw = await apiRequest<Device[]>('/discovery/devices');
+      return raw.map(normalizeDevice);
+    });
   },
-
+  
   async getDeviceByIp(ip: string): Promise<Device | null> {
     if (USE_MOCK) {
       const dev = mockData.devices.find(d => d.device_ip === ip);
       return dev ? normalizeDevice(dev) : null;
     }
-    const d = await apiRequest<Device>(`/discovery/devices/${ip}`);
-    return normalizeDevice(d);
+  const rawList = await cachedRequest('devices::list', async () => {
+    const raw = await apiRequest<Device[]>('/discovery/devices');
+    return raw;
+  });
+  const found = (rawList || []).find((x: any) => x.device_ip === ip || x.ip === ip);
+  return found ? normalizeDevice(found) : null;
   },
 
   // Performance
@@ -217,7 +280,7 @@ export const apiService = {
         last_activity: lastIso || '',
         protocol: String(r.protocol ?? r.method ?? ''),
         status: status,
-        authenticated_via: r.authenticated_via ?? r.authenticated_via ?? '',
+        authenticated_via: r.authenticated_via ?? r.method ?? '',
       } as Session;
     });
 
@@ -243,7 +306,7 @@ export const apiService = {
   },
 
   // Alerts
-  async getAlerts(limit = 100): Promise<Alert[]> {
+  async getAlerts(limit = 10): Promise<Alert[]> {
     if (USE_MOCK) return mockData.alerts;
     return apiRequest<Alert[]>(`/alerts/recent?limit=${encodeURIComponent(String(limit))}`);
   },
@@ -295,19 +358,34 @@ export const apiService = {
       const device = mockData.devices.find(d => d.device_ip === deviceIp);
       return device ? {
         device_ip: device.device_ip,
+        // add top-level signal plus snapshot-level signal
+        signal: {
+          rssi_dbm: -60 + Math.floor(Math.random() * 10), // mock -60..-51
+          rssi_pct: 70 + Math.floor(Math.random() * 20),  // mock 70..89
+          snr_db: 30 + Math.floor(Math.random() * 5),
+        },
         snapshot: {
-          cpu_pct: Math.random() * 100,
-          memory_pct: Math.random() * 100,
+          cpu_pct: Math.round(Math.random() * 100),
+          memory_pct: Math.round(Math.random() * 100),
           uptime_seconds: Math.floor(Math.random() * 100000),
           timestamp: new Date().toISOString(),
+          signal: {
+            rssi_dbm: -60 + Math.floor(Math.random() * 10),
+            rssi_pct: 70 + Math.floor(Math.random() * 20),
+            snr_db: 30 + Math.floor(Math.random() * 5),
+          },
         },
         latest_per_interface: device.interfaces.map(i => ({
           device_ip: device.device_ip,
           interface_name: i.interface_name,
-          inbound_kbps: Math.random() * 1000,
-          outbound_kbps: Math.random() * 1000,
+          inbound_kbps: Math.round(Math.random() * 1000),
+          outbound_kbps: Math.round(Math.random() * 1000),
           errors: Math.floor(Math.random() * 3),
           timestamp: new Date().toISOString(),
+          signal: {
+            rssi_dbm: -70 + Math.floor(Math.random() * 15),
+            rssi_pct: 50 + Math.floor(Math.random() * 40),
+          },
         })),
         performance_history: [...Array(24)].map((_, idx) => ({
           timestamp: new Date(Date.now() - idx * 3600000).toISOString(),
@@ -324,9 +402,11 @@ export const apiService = {
       } : null;
     }
 
-    const encoded = encodeURIComponent(deviceIp);
+  const encoded = encodeURIComponent(deviceIp);
+  return cachedRequest(`device::${deviceIp}`, async () => {
     const resp = await fetch(`${API_BASE}/devices/${encoded}/details`);
     if (!resp.ok) throw new Error(`Failed to fetch device details: ${resp.statusText}`);
     return resp.json();
-  },
+  });
+  }
 };

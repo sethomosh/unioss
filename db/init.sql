@@ -94,3 +94,22 @@ CREATE TABLE IF NOT EXISTS traffic_counters_last (
   last_seen        DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY(device_ip, interface_index)
 );
+
+CREATE TABLE IF NOT EXISTS signal_metrics (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  device_ip VARCHAR(45) NOT NULL,
+  interface_index INT NOT NULL DEFAULT 0,
+  interface_name VARCHAR(128) NOT NULL DEFAULT '',
+  rssi_dbm DOUBLE NULL,
+  rssi_pct DOUBLE NULL,
+  snr_db DOUBLE NULL,
+  tx_rate_mbps DOUBLE NULL,
+  rx_rate_mbps DOUBLE NULL,
+  link_quality_pct DOUBLE NULL,
+  frequency_mhz INT NULL,
+  raw_blob JSON NULL,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_signal_device_ts (device_ip, timestamp),
+  KEY idx_signal_device_iface (device_ip, interface_index)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
