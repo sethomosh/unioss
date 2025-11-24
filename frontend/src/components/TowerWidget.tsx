@@ -312,7 +312,7 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
     <div className="p-4 grid gap-4">
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-md p-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">tower overview</h3>
+          <h3 className="text-lg font-semibold">{overview?.towerName ?? activeTower?.name ?? 'tower overview'}</h3>
 
           <div className="flex space-x-2" role="tablist" aria-label="tower selector">
             {towers && towers.length ? (
