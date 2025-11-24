@@ -1,5 +1,4 @@
 // src/pages/DevicesPage.tsx - Fixed dark theme and improved styling
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { apiService } from '../services/apiService';
 import { Device, PerformanceMetrics, Session, Alert, SNMPData } from '../types/types';
@@ -8,6 +7,8 @@ import TowerWidget from '../components/TowerWidget';
 
 export const DevicesPage: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [towersList, setTowersList] = useState<{ name: string; devices: Device[] }[]>([]);
+  const [filterTower, setFilterTower] = useState<string | null>(null);
   const [performance, setPerformance] = useState<Record<string, PerformanceMetrics>>({});
   const [sessions, setSessions] = useState<Session[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -63,18 +64,20 @@ export const DevicesPage: React.FC = () => {
 
   const loadAllOnce = useCallback(async () => {
     try {
-      const [devs, sess, perf, al] = await Promise.all([
+      const [devs, sess, perf, al, towers] = await Promise.all([
         apiService.getDevices(),
         apiService.getSessions(),
         apiService.getPerformance(),
         apiService.getAlerts(),
+        apiService.getTowers(),
       ]);
 
       if (!mountedRef.current) return;
 
       setDevices(devs || []);
       setSessions(sess || []);
-
+      setTowersList(towers || []);
+      
       const perfMap: Record<string, PerformanceMetrics> = {};
       (perf || []).forEach(p => {
         if (p.device_ip) perfMap[p.device_ip] = p;
@@ -134,13 +137,31 @@ export const DevicesPage: React.FC = () => {
 
   if (loading) return <div className="p-6 text-center text-muted-foreground">Loading devices…</div>;
 
+  // compute filtered devices when a tower filter is active
+  const devicesToShow = filterTower
+    ? (towersList.find(t => t.name === filterTower)?.devices || [])
+    : devices;
+
   return (
     <div className="space-y-6 w-full">
       <h1 className="text-xl font-bold text-foreground">Devices</h1>
 
       {/* tower overview widget */}
-      <TowerWidget />
+      {/* pass towersList so widget can reuse page-fetched data and avoid a double fetch */}
+      <TowerWidget towersProp={towersList} onViewDevices={(name: string) => setFilterTower(name)} />
 
+      {filterTower && (
+        <div className="flex items-center gap-4">
+          <div className="text-sm text-muted-foreground">filtered: <span className="font-medium">{filterTower}</span></div>
+          <button
+            className="px-2 py-1 text-sm rounded bg-slate-100 dark:bg-slate-700"
+            onClick={() => setFilterTower(null)}
+          >
+            clear filter
+          </button>
+        </div>
+      )}
+      
       {/* Devices Table - Fixed dark theme */}
       <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -166,7 +187,7 @@ export const DevicesPage: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-border">
-              {devices.map(dev => {
+              {devicesToShow.map(dev => {
                 const perf = performance[dev.device_ip];
                 const devSessions = sessions.filter(s => s.device_ip === dev.device_ip);
                 const devAlerts = alerts.filter(a => a.device_ip === dev.device_ip);

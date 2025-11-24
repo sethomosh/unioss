@@ -19,6 +19,8 @@ const USE_MOCK = import.meta.env.VITE_MOCK === 'true';
 const SHORT_TTL_MS = 7000;
 const _cache = new Map<string, { ts: number; data: any }>();
 const _inflight = new Map<string, Promise<any>>();
+// use env value for batching tower detail fetches (was added)
+const TOWER_BATCH = Number(import.meta.env.VITE_TOWER_BATCH) || 6;
 
 // Retry with exponential backoff
 async function exponentialBackoff<T>(
@@ -73,6 +75,18 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
   });
 }
 
+
+// helper: normalize tower key (used for grouping)
+function normalizeTowerKey(raw?: any) {
+  if (!raw) return 'ungrouped';
+  const s = String(raw).trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  return s;
+}
+function titleCase(s: string) {
+  return s.split(' ').map(w => w ? (w[0].toUpperCase() + w.slice(1)) : '').join(' ');
+}
+
+
 // returns array of { name: string, device_count: number, devices: Device[] }
 async function getTowers(): Promise<{ name: string; devices: Device[] }[]> {
   // reuse cached discovery list to avoid extra network I/O
@@ -81,22 +95,188 @@ async function getTowers(): Promise<{ name: string; devices: Device[] }[]> {
   const map = new Map<string, Device[]>();
   for (const d of devices) {
     const hn = (d.hostname || '').toString();
-    let towerName = d['tower'] ?? null;
-    if (!towerName) {
+    let towerRaw = d['tower'] ?? null;
+    if (!towerRaw) {
       const m = hn.match(/^(tower\s*\d+|tower-\d+|tower\d+)/i);
-      if (m) towerName = m[0];
+      if (m) towerRaw = m[0];
     }
-    if (!towerName) towerName = 'ungrouped';
-    if (!map.has(towerName)) map.set(towerName, []);
-    map.get(towerName)!.push(d);
+    const key = normalizeTowerKey(towerRaw);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(d);
   }
-  return Array.from(map.entries()).map(([name, devs]) => ({ name, devices: devs }));
+
+  // filter out the generic 'ungrouped' bucket so the widget only shows named towers
+  const result = Array.from(map.entries())
+    .filter(([key]) => key !== 'ungrouped')
+    .map(([key, devs]) => ({ name: titleCase(key), devices: devs }));
+
+  // debug: remove or comment out in production
+  // eslint-disable-next-line no-console
+  console.debug('[apiService.getTowers] towers:', result.map(r => ({ name: r.name, count: r.devices.length })));
+
+  return result;
+}
+
+// ---------------------------
+// ip / cidr helpers (ipv4 only)
+// ---------------------------
+function ipToInt(ip: string): number | null {
+  if (!ip || typeof ip !== 'string') return null;
+  const parts = ip.trim().split('.');
+  if (parts.length !== 4) return null;
+  const nums = parts.map(p => {
+    const n = Number(p);
+    return Number.isInteger(n) && n >= 0 && n <= 255 ? n : NaN;
+  });
+  if (nums.some(n => Number.isNaN(n))) return null;
+  // convert to 32-bit integer
+  return ((nums[0] << 24) >>> 0) + (nums[1] << 16) + (nums[2] << 8) + nums[3];
+}
+
+function parseCidr(cidr: string): { baseInt: number; maskLen: number } | null {
+  if (!cidr || typeof cidr !== 'string') return null;
+  const [base, mask] = cidr.trim().split('/');
+  const baseInt = ipToInt(base);
+  const maskLen = mask ? Number(mask) : 32;
+  if (baseInt === null || !Number.isInteger(maskLen) || maskLen < 0 || maskLen > 32) return null;
+  return { baseInt, maskLen };
+}
+
+function cidrMatch(ip: string, cidr: string): boolean {
+  const ipInt = ipToInt(ip);
+  const parsed = parseCidr(cidr);
+  if (ipInt === null || !parsed) return false;
+  const { baseInt, maskLen } = parsed;
+  if (maskLen === 0) return true;
+  const mask = maskLen === 32 ? 0xffffffff >>> 0 : (~0 << (32 - maskLen)) >>> 0;
+  return (ipInt & mask) === (baseInt & mask);
+}
+
+// ---------------------------
+// getIPGroups: group devices by given cidr list or auto /24
+// ---------------------------
+/**
+ * group devices by IP ranges.
+ *
+ * - ranges: array of either "10.0.1.0/24" strings or objects { name: 'site-a', cidr: '10.0.1.0/24' }
+ * - when ranges is omitted or empty, function auto-buckets by /24 using device IPs (e.g. 10.0.2.5 -> '10.0.2.0/24')
+ *
+ * returns same shape as getTowers(): [{ name, devices }]
+ */
+async function getIPGroups(
+  ranges?: Array<string | { name?: string; cidr: string }>
+): Promise<{ name: string; devices: Device[] }[]> {
+  const devices = await apiService.getDevices();
+
+  // normalize ranges into consistent objects
+  let buckets: { name: string; cidr: string }[] = [];
+  if (Array.isArray(ranges) && ranges.length) {
+    buckets = ranges.map(r => {
+      if (typeof r === 'string') {
+        return { name: r, cidr: r };
+      } else {
+        return { name: (r.name ?? r.cidr), cidr: r.cidr };
+      }
+    });
+  } else {
+    // auto bucket: build /24 buckets from devices
+    const seen = new Set<string>();
+    for (const d of devices) {
+      const ip = d.device_ip ?? d.ip ?? '';
+      const ipInt = ipToInt(ip);
+      if (ipInt === null) continue;
+      // extract first three octets to form x.y.z.0/24
+      const parts = ip.trim().split('.');
+      if (parts.length === 4) {
+        const cidr = `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
+        if (!seen.has(cidr)) {
+          seen.add(cidr);
+          buckets.push({ name: cidr, cidr });
+        }
+      }
+    }
+  }
+
+  // create map for buckets
+  const map = new Map<string, Device[]>();
+  for (const b of buckets) map.set(b.name, []);
+
+  // fallback ungrouped bucket
+  map.set('ungrouped', []);
+
+  // assign devices to first matching bucket (order matters)
+  for (const d of devices) {
+    const ip = d.device_ip ?? d.ip ?? '';
+    let matched = false;
+    for (const b of buckets) {
+      try {
+        if (cidrMatch(ip, b.cidr)) {
+          map.get(b.name)!.push(d);
+          matched = true;
+          break;
+        }
+      } catch {
+        // skip malformed cidr
+      }
+    }
+    if (!matched) map.get('ungrouped')!.push(d);
+  }
+
+  // result: keep all buckets but move 'ungrouped' to the end
+  const result: { name: string; devices: Device[] }[] = [];
+  for (const b of buckets) {
+    const devs = map.get(b.name) || [];
+    // skip empty buckets optionally? keep non-empty only for now to match previous widget behaviour
+    if (devs.length > 0) result.push({ name: b.name, devices: devs });
+  }
+  const un = map.get('ungrouped') || [];
+  if (un.length > 0) result.push({ name: 'ungrouped', devices: un });
+
+  // debug
+  // eslint-disable-next-line no-console
+  console.debug('[apiService.getIPGroups] buckets:', result.map(r => ({ name: r.name, count: r.devices.length })));
+
+  return result;
+}
+
+
+
+
+// helper: robust extraction of throughput (kbps) from different backend shapes
+function sampleThroughputKbps(sample: any) {
+  // prefer explicit kbps fields
+  const inKbps = sample.inbound_kbps ?? sample.in_kbps ?? sample.inbound ?? null;
+  const outKbps = sample.outbound_kbps ?? sample.out_kbps ?? sample.outbound ?? null;
+  if ((inKbps != null) || (outKbps != null)) {
+    return (Number(inKbps || 0) + Number(outKbps || 0));
+  }
+
+  // fallback: if sample already reports octets for an interval, best-effort convert using a sensible default
+  const inOctets = sample.in_octets ?? sample.in_bytes ?? null;
+  const outOctets = sample.out_octets ?? sample.out_bytes ?? null;
+  if ((inOctets != null) || (outOctets != null)) {
+    // assume this sample represents total bytes for a reporting interval.
+    // we don't know the interval; use 3600s as a safe fallback (kbps ~ kilobits-per-second).
+    const seconds = sample.interval_seconds ?? 3600;
+    const kbps = (((Number(inOctets || 0) + Number(outOctets || 0)) * 8) / (seconds * 1000)) || 0;
+    return kbps;
+  }
+
+  // last-resort: if there are packet counters, return a small proportional value (not ideal)
+  const inPackets = sample.in_packets ?? 0;
+  const outPackets = sample.out_packets ?? 0;
+  if (inPackets || outPackets) return (inPackets + outPackets) * 0.01;
+
+  return 0;
 }
 
 // aggregated overview for a tower (lazy loads details for devices)
-async function getTowerOverview(towerName: string, batchSize = 8) {
+// changed default batchSize to use TOWER_BATCH constant
+async function getTowerOverview(towerName: string, batchSize = TOWER_BATCH) {
   const towers = await getTowers();
-  const tower = towers.find(t => t.name === towerName);
+  // try matching both title-cased and normalized names so callers like 'Tower 1' or 'tower 1' both work
+  const normalizedTarget = normalizeTowerKey(towerName);
+  const tower = towers.find(t => normalizeTowerKey(t.name) === normalizedTarget);
   if (!tower) return null;
 
   // batched lazy fetch details for devices in the tower (cached)
@@ -106,54 +286,213 @@ async function getTowerOverview(towerName: string, batchSize = 8) {
       cachedRequest(`device::${d.device_ip}`, () => apiService.getDeviceDetails(d.device_ip))
     );
     // wait for this batch to finish before starting the next one
-    // this keeps the browser and backend from being flooded
-    // if one device detail fails, cachedRequest will throw - we catch and push null for resiliency
-    // (we intentionally keep batch failures non-fatal for the overview)
     // eslint-disable-next-line no-await-in-loop
     const resolved = await Promise.all(batch.map(p => p.catch(() => null)));
     detailResults.push(...resolved);
   }
   const details = detailResults;
 
+  // small helper: compute a best-effort latest throughput (kbps) for a single device detail
+  function computeLatestThroughput(det: any) {
+    if (!det) return 0;
+    // 1) latest_per_interface with explicit kbps
+    if (Array.isArray(det.latest_per_interface) && det.latest_per_interface.length) {
+      let sum = 0;
+      for (const it of det.latest_per_interface) {
+        const inK = Number(it.inbound_kbps ?? it.in_kbps ?? it.inbound ?? 0) || 0;
+        const outK = Number(it.outbound_kbps ?? it.out_kbps ?? it.outbound ?? 0) || 0;
+        if (inK || outK) { sum += inK + outK; continue; }
+
+        // if only octets are present, convert using interval_seconds (fallback 3600s)
+        const inOct = Number(it.in_octets ?? it.in_bytes ?? 0);
+        const outOct = Number(it.out_octets ?? it.out_bytes ?? 0);
+        if (inOct || outOct) {
+          const secs = Number(it.interval_seconds ?? 3600) || 3600;
+          sum += (((inOct + outOct) * 8) / (secs * 1000));
+        }
+      }
+      if (sum) return sum;
+    }
+
+    // 2) traffic_history: take the latest sample with kbps fields or compute delta with previous
+    if (Array.isArray(det.traffic_history) && det.traffic_history.length) {
+      const hist = det.traffic_history.slice().sort((a: any, b: any) => {
+        const ta = Date.parse(String(a.timestamp ?? a.ts ?? a.time)) || 0;
+        const tb = Date.parse(String(b.timestamp ?? b.ts ?? b.time)) || 0;
+        return ta - tb;
+      });
+      const last = hist[hist.length - 1];
+      if (last) {
+        const inK = Number(last.inbound_kbps ?? last.in_kbps ?? last.inbound ?? 0);
+        const outK = Number(last.outbound_kbps ?? last.out_kbps ?? last.outbound ?? 0);
+        if (inK || outK) return inK + outK;
+
+        // try delta using previous sample
+        const prev = hist.length > 1 ? hist[hist.length - 2] : null;
+        const curBytes = Number(last.in_octets ?? last.in_bytes ?? 0) + Number(last.out_octets ?? last.out_bytes ?? 0);
+        const prevBytes = prev ? (Number(prev.in_octets ?? prev.in_bytes ?? 0) + Number(prev.out_octets ?? prev.out_bytes ?? 0)) : NaN;
+        if (!Number.isNaN(prevBytes) && prev) {
+          const tcur = Date.parse(String(last.timestamp ?? last.ts ?? last.time)) || 0;
+          const tprev = Date.parse(String(prev.timestamp ?? prev.ts ?? prev.time)) || 0;
+          const deltaSec = Math.max(1, Math.floor((tcur - tprev) / 1000));
+          const deltaBytes = Math.max(0, curBytes - prevBytes);
+          return ((deltaBytes * 8) / (deltaSec * 1000)) || 0;
+        }
+
+        // fallback single-sample conversion assuming interval_seconds or 3600s
+        const secs = Number(last.interval_seconds ?? 3600) || 3600;
+        if (curBytes) return (((curBytes) * 8) / (secs * 1000)) || 0;
+      }
+    }
+
+    // 3) snapshot or top-level throughput fields
+    const snap = det?.snapshot ?? {};
+    const inK = Number(snap.inbound_kbps ?? snap.in_kbps ?? snap.inbound ?? 0);
+    const outK = Number(snap.outbound_kbps ?? snap.out_kbps ?? snap.outbound ?? 0);
+    if (inK || outK) return inK + outK;
+
+    // 4) last-resort: use any provided latest_throughput field if present
+    if (typeof det.latest_throughput === 'number') return Number(det.latest_throughput);
+
+    return 0;
+  }
+
   // aggregate
   const counts = { total: 0, up: 0, down: 0 };
-  let cpuSum = 0, cpuCnt = 0, rssiSum = 0, rssiCnt = 0;
+  let cpuSum = 0, cpuCnt = 0, memSum = 0, memCnt = 0, rssiSum = 0, rssiCnt = 0;
   const trafficSpark: { ts: string; throughput: number }[] = []; // small array of { ts, throughput }
+  const deviceList: { device_ip: string; hostname: string; status: string }[] = [];
 
   for (const [i, d] of tower.devices.entries()) {
     const det = details[i];
     counts.total += 1;
-    const status = (d.status ?? (d.online ? 'up' : 'down')) as string;
+
+    // resolve device status: prefer detail status/snapshot, fallback to top-level device keys
+    const detStatus = det?.status ?? det?.snapshot?.status ?? null;
+    const topStatus = d.status ?? (d.online ? 'up' : 'down');
+    const status = (detStatus ?? topStatus) as string;
+
     if (status === 'up') counts.up += 1;
     else counts.down += 1;
 
+    // cpu & memory from snapshot preferred, else top-level values
     if (det?.snapshot?.cpu_pct != null) { cpuSum += Number(det.snapshot.cpu_pct); cpuCnt++; }
+    else if (typeof d.cpu_pct === 'number') { cpuSum += Number(d.cpu_pct); cpuCnt++; }
+
+    if (det?.snapshot?.memory_pct != null) { memSum += Number(det.snapshot.memory_pct); memCnt++; }
+    else if (typeof d.memory_pct === 'number') { memSum += Number(d.memory_pct); memCnt++; }
+
     // top-level signal or snapshot.signal
     const sig = det?.signal ?? det?.snapshot?.signal ?? d.signal ?? null;
     if (sig && sig.rssi_dbm != null) { rssiSum += Number(sig.rssi_dbm); rssiCnt++; }
+    
+    // compute and attach latest_throughput (kbps) to detail object for frontend consumption
+    try {
+      const latestKbps = computeLatestThroughput(det);
+      if (det && typeof det === 'object') det.latest_throughput = latestKbps;
+    } catch {
+      /* noop - defensive */
+    }
 
-    // traffic sparkline: use traffic_history of each device, sum inbound_kbps per timestamp
+    // traffic sparkline: aggregate per-device traffic_history into a time-series (kbps)
     if (Array.isArray(det?.traffic_history) && det.traffic_history.length) {
-      const N = 12;
-      const samples = det.traffic_history.slice(0, N).reverse(); // oldest -> newest
-      for (let j = 0; j < samples.length; j++) {
-        const s = samples[j];
-        const ts = s.timestamp || String(j);
-        const throughput = Number(s.inbound_kbps || 0) + Number(s.outbound_kbps || 0);
-        const idx = trafficSpark.findIndex(t => t.ts === ts);
-        if (idx === -1) trafficSpark.push({ ts, throughput });
+      // sort ascending by time to allow delta calculations
+      const hist = det.traffic_history.slice().map((s: any) => ({
+        ...s,
+        ts: s.timestamp ?? s.time ?? s.ts ?? null,
+      })).filter((s: any) => s.ts).sort((a: any, b: any) => {
+        const ta = Date.parse(String(a.ts)) || 0;
+        const tb = Date.parse(String(b.ts)) || 0;
+        return ta - tb;
+      });
+
+      // if the sample has kbps fields, use them directly; if only octet counters exist, compute delta between consecutive samples
+      for (let j = 0; j < hist.length; j++) {
+        const cur = hist[j];
+        let throughput = 0;
+
+        // if sample contains explicit kbps, use it
+        const kbpsVal = sampleThroughputKbps(cur);
+        if (kbpsVal && kbpsVal > 0) {
+          throughput = kbpsVal;
+        } else {
+          // try delta method with previous sample when octet counters are present
+          const prev = hist[j - 1];
+          const curIn = Number(cur.in_octets ?? cur.in_bytes ?? NaN);
+          const curOut = Number(cur.out_octets ?? cur.out_bytes ?? NaN);
+          const prevIn = prev ? Number(prev.in_octets ?? prev.in_bytes ?? NaN) : NaN;
+          const prevOut = prev ? Number(prev.out_octets ?? prev.out_bytes ?? NaN) : NaN;
+
+          if (!Number.isNaN(curIn) && !Number.isNaN(prevIn) && (typeof cur.ts === 'string') && prev) {
+            const ta = Date.parse(String(prev.ts)) || 0;
+            const tb = Date.parse(String(cur.ts)) || 0;
+            const deltaSec = Math.max(1, Math.floor((tb - ta) / 1000));
+            const deltaBytes = Math.max(0, (curIn + curOut) - (prevIn + prevOut));
+            throughput = ((deltaBytes * 8) / (deltaSec * 1000)) || 0; // kbps
+          } else {
+            // fallback single-sample approximation
+            throughput = sampleThroughputKbps(cur);
+          }
+        }
+
+        // bucket timestamp to hour (ISO hour) so devices align on the same time axis
+        let bucketTs: string;
+        try {
+          const d = new Date(String(cur.ts));
+          if (!isNaN(+d)) {
+            bucketTs = d.toISOString().slice(0, 13) + ':00:00'; // YYYY-MM-DDTHH:00:00Z
+          } else {
+            bucketTs = String(cur.ts);
+          }
+        } catch {
+          bucketTs = String(cur.ts);
+        }
+
+        const idx = trafficSpark.findIndex(t => t.ts === bucketTs);
+        if (idx === -1) trafficSpark.push({ ts: bucketTs, throughput });
+        else trafficSpark[idx].throughput += throughput;
+      }
+    } else if (Array.isArray(det?.latest_per_interface) && det.latest_per_interface.length) {
+      // fallback: single-point samples from latest_per_interface - still include them but they may produce a flat line
+      for (const lp of det.latest_per_interface) {
+        const ts = lp.timestamp ? String(lp.timestamp) : new Date().toISOString();
+        const throughput = (Number(lp.inbound_kbps || 0) + Number(lp.outbound_kbps || 0)) || sampleThroughputKbps(lp);
+        const bucketTs = (() => {
+          const d = new Date(String(ts));
+          return isNaN(+d) ? String(ts) : d.toISOString().slice(0,13) + ':00:00';
+        })();
+        const idx = trafficSpark.findIndex(t => t.ts === bucketTs);
+        if (idx === -1) trafficSpark.push({ ts: bucketTs, throughput });
         else trafficSpark[idx].throughput += throughput;
       }
     }
+
+    deviceList.push({
+      device_ip: d.device_ip,
+      hostname: d.hostname ?? d.name ?? d.device_ip,
+      status: status ?? 'unknown',
+    });
   }
 
   const avgCpu = cpuCnt ? cpuSum / cpuCnt : null;
+  const avgMemory = memCnt ? memSum / memCnt : null;
   const avgRssi = rssiCnt ? rssiSum / rssiCnt : null;
 
-  // normalize sparkline array sorted by ts
-  trafficSpark.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-  return { towerName, counts, avgCpu, avgRssi, trafficSpark, devices: tower.devices, details };
+  // normalize sparkline array sorted by unix time when possible
+  trafficSpark.sort((a, b) => {
+    const ta = Date.parse(String(a.ts)) || 0;
+    const tb = Date.parse(String(b.ts)) || 0;
+    if (ta && tb) return ta - tb;
+    return String(a.ts).localeCompare(String(b.ts));
+  });
+
+  // debug: log overview for troubleshooting
+  // eslint-disable-next-line no-console
+  console.debug('[apiService.getTowerOverview]', towerName, { counts, deviceListCount: deviceList.length, trafficPoints: trafficSpark.length });
+
+  return { towerName: titleCase(normalizeTowerKey(towerName)), counts, avgCpu, avgMemory, avgRssi, trafficSpark, devices: tower.devices, details, deviceList };
 }
+
 
 
 // Mock data
@@ -495,5 +834,5 @@ export const apiService = {
   // tower helpers (added)
   getTowers,
   getTowerOverview,
-
+  getIPGroups,
 };
