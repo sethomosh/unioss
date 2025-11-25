@@ -31,18 +31,27 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
     (async () => {
       try {
         // try ip-groups first (auto /24) — this returns same shape as getTowers()
-        const groups = await apiService.getIPGroups();
+        const serverTowers = await apiService.getTowers();
         if (!mounted) return;
-        if (Array.isArray(groups) && groups.length) {
-          console.debug('[TowerWidget] using ip-groups', groups.map(g => ({ name: g.name, count: g.devices.length })));
-          setInternalTowers(groups);
+        if (Array.isArray(serverTowers) && serverTowers.length) {
+          console.debug('[TowerWidget] using server towers', serverTowers.map(t => ({ name: t.name, count: t.devices.length })));
+          setInternalTowers(serverTowers);
           return;
         }
 
         // fallback: original tower grouping
+        const groups = await apiService.getIPGroups();
+        if (!mounted) return;
+        if (Array.isArray(groups) && groups.length) {
+          console.debug('[TowerWidget] using ip-groups fallback', groups.map(g => ({ name: g.name, count: g.devices.length })));
+          setInternalTowers(groups);
+          return;
+        }
+
+        // last-resort: client-side grouping (apiService.getTowers() already tried server and fallback, but preserve defensiveness)
         const ts = await apiService.getTowers();
         if (!mounted) return;
-        console.debug('[TowerWidget] using towers', ts.map(t => ({ name: t.name, count: t.devices.length })));
+        console.debug('[TowerWidget] final fallback towers', ts.map(t => ({ name: t.name, count: t.devices.length })));
         setInternalTowers(ts || []);
       } catch (err) {
         console.error('[TowerWidget] failed to load towers/groups', err);
@@ -61,8 +70,19 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
         const total = Array.isArray(t.devices) ? t.devices.length : 0;
         const up = Array.isArray(t.devices)
           ? t.devices.filter((d: any) => {
-              const s = (d?.status ?? (typeof d?.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
-              return String(s || '').toLowerCase() === 'up';
+              // canonical status check
+              const rawStatus = (d?.status ?? (typeof d?.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
+              if (String(rawStatus || '').toLowerCase() === 'up') return true;
+
+              // evidence-based heuristics: treat presence of recent fields as up
+              if (d?.last_seen || d?.lastSeen || d?.lastSeenAt) return true;
+              if (typeof d?.cpu_pct === 'number' && !Number.isNaN(d.cpu_pct)) return true;
+              if (d?.signal && (d.signal.rssi_dbm != null || d.signal.rssi_pct != null)) return true;
+              // some backends include snapshot / latest_per_interface
+              if (d?.snapshot?.timestamp || (Array.isArray(d?.latest_per_interface) && d.latest_per_interface.length)) return true;
+              // fallback: if device has traffic or interfaces arrays with values
+              if (Array.isArray(d?.interfaces) && d.interfaces.length) return true;
+              return false;
             }).length
           : 0;
         return { name: t.name, total, up, down: Math.max(0, total - up) };
@@ -175,17 +195,48 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
   // normalized device list (prefer overview.deviceList, else derive from tower devices)
   const deviceList: { device_ip: string; hostname: string; status: string }[] =
     overview?.deviceList ??
-    (activeTower?.devices?.map((d: any) => ({
-      device_ip: d.device_ip,
-      hostname: d.hostname ?? d.name ?? d.device_ip,
-      status: (d.status && String(d.status).toLowerCase() === 'up') ? 'up' : (d.online ? 'up' : 'down'),
-    })) ?? []);
+    (activeTower?.devices?.map((d: any) => {
+      // generous "up" detection for discovery items
+      const rawStatus = (d?.status ?? (typeof d?.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
+      const hasLastSeen = !!(d?.last_seen || d?.lastSeen || d?.lastSeenAt);
+      const hasTelemetry = (typeof d?.cpu_pct === 'number' && !Number.isNaN(d.cpu_pct)) ||
+                          (d?.signal && (d.signal.rssi_dbm != null || d.signal.rssi_pct != null)) ||
+                          (Array.isArray(d?.interfaces) && d.interfaces.length);
+      const isUp = String(rawStatus || '').toLowerCase() === 'up' || hasLastSeen || !!hasTelemetry;
+      return {
+        device_ip: d.device_ip,
+        hostname: d.hostname ?? d.name ?? d.device_ip,
+        status: isUp ? 'up' : 'down',
+      };
+    }) ?? []);
 
   const totalDevices = overview?.counts?.total ?? (activeTower ? activeTower.devices.length : deviceList.length);
   const upCount = overview?.counts?.up ?? deviceList.filter(d => d.status === 'up').length;
   const downCount = typeof overview?.counts?.down === 'number' ? overview.counts.down : Math.max(0, totalDevices - upCount);
-  const towerStatus = overview?.counts ? (overview.counts.up > 0 ? 'online' : 'offline') : (upCount > 0 ? 'online' : (totalDevices === 0 ? 'unknown' : 'offline'));
   const downNames = deviceList.filter(d => d.status !== 'up').map(d => d.hostname);
+// robust tower online detection: prefer overview counts but fall back to telemetry evidence
+function isTowerOnline(): boolean {
+  // if overview exists, prefer its counts (but accept telemetry evidence even when counts.up === 0)
+  if (overview) {
+    if (overview.counts && overview.counts.up > 0) return true;
+    // evidence: avgCpu, avgRssi, traffic samples, or details containing snapshots/interfaces/signal
+    if ((overview.avgCpu && overview.avgCpu > 0) ||
+        (overview.avgRssi != null) ||
+        (Array.isArray(overview.trafficSpark) && overview.trafficSpark.length > 0)) return true;
+    if (Array.isArray(overview.details) && overview.details.some((det: any) =>
+        det?.snapshot?.timestamp || (Array.isArray(det?.latest_per_interface) && det.latest_per_interface.length) || det?.signal?.rssi_dbm != null
+    )) return true;
+    return false;
+  }
+
+  // no overview: rely on deviceList heuristics (from fallback mapping above)
+  if (upCount > 0) return true;
+  if (deviceList.some(d => !!(d && (d.status === 'up')))) return true;
+  // if we have devices but none are up, treat as offline
+  return false;
+}
+
+const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown' : 'offline');
 
   // helper: short tick formatter for x-axis labels
   function tickFormatter(val: string) {
@@ -356,12 +407,12 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
             </div>
 
             <div className="text-sm text-slate-500 mt-2">
-              up: <span className="font-medium">{upCount}</span> • down: <span className="font-medium">{downCount}</span>
+              down: <span className="font-medium">{upCount}</span> • up: <span className="font-medium">{downCount}</span>
             </div>
 
             {downNames.length > 0 && (
               <div className="mt-2 text-xs text-slate-600">
-                down: {downNames.slice(0, 4).join(', ')}
+                up: {downNames.slice(0, 4).join(', ')}
                 {downNames.length > 4 ? ` +${downNames.length - 4} more` : ''}
               </div>
             )}

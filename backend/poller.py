@@ -15,6 +15,7 @@ import logging
 import asyncio
 import math
 import json
+import re
 from decimal import Decimal
 from datetime import datetime as _dt, datetime
 from typing import Dict, Any, Optional, List, Tuple
@@ -878,6 +879,42 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                 logger.debug("snmp performance poll failed for %s: %s", ip, e)
                 cpu_val, mem_kb, uptime_secs = None, None, None
 
+            # fetch sysDescr + sysObjectID for os/version evaluation (non-blocking via executor)
+            try:
+                sysdescr = await loop.run_in_executor(None, snmp_get, ip, os.getenv("SNMP_COMMUNITY", "public"), "1.3.6.1.2.1.1.1.0", int(os.getenv("SNMP_PORT", "161")))
+            except Exception:
+                sysdescr = None
+            try:
+                sysobject = await loop.run_in_executor(None, snmp_get, ip, os.getenv("SNMP_COMMUNITY", "public"), "1.3.6.1.2.1.1.2.0", int(os.getenv("SNMP_PORT", "161")))
+            except Exception:
+                sysobject = None
+
+            # persist os info into devices table when possible (best-effort)
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                try:
+                    parsed_ver = None
+                    if sysdescr:
+                        m = re.search(r"(\d+(?:\.\d+)+)", str(sysdescr))
+                        if m:
+                            parsed_ver = m.group(1)
+                    cur.execute("UPDATE devices SET os_version = %s, sysdescr = %s WHERE ip = %s", (parsed_ver or None, str(sysdescr)[:1024] if sysdescr else None, ip))
+                    conn.commit()
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        cur.close()
+                        conn.close()
+                    except Exception:
+                        pass
+            except Exception:
+                logger.debug("could not persist os info for %s", ip)
+
             perf_row = {
                 "device_ip": ip,
                 # ensure no None -> DB integrity: cpu_pct numeric, memory_pct numeric (percentage or KB fallback)
@@ -887,14 +924,23 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                 "timestamp": _dt.utcnow(),
             }
 
-            # save perf row only if changed
+            # save perf row only if changed, then run perf + os/version alert evaluations
             try:
                 await loop.run_in_executor(None, save_performance_metrics_row, perf_row)
-                # evaluate perf alerts (prev_row optional - pass None for now)
                 await loop.run_in_executor(None, alerter.evaluate_performance_and_maybe_alert, ip, perf_row, None)
+                # run os/version check (non-blocking in executor)
+                try:
+                    vendor_key = (device.get("vendor_key") or device.get("vendor") or "").strip().lower()
+                    model = None
+                    if sysdescr:
+                        m2 = re.search(r"Model[:\s]*([A-Za-z0-9\-\_]+)", str(sysdescr), re.IGNORECASE)
+                        if m2:
+                            model = m2.group(1)
+                    await loop.run_in_executor(None, alerter.evaluate_os_and_maybe_alert, ip, sysdescr, sysobject, vendor_key, model)
+                except Exception:
+                    logger.exception("failed to run evaluate_os_and_maybe_alert for %s", ip)
             except Exception as e:
-                logger.exception("failed to save perf row or run alerter for %s: %s", ip, e)
-                
+                logger.exception("failed to save perf row or run alerter for %s: %s", ip, e)               
         except Exception as e:
             logger.exception("poll_device(%s) failed: %s", ip, e)
         finally:

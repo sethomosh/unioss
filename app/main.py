@@ -919,6 +919,29 @@ def towers_overview():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/towers/list")
+def api_towers_list():
+    try:
+        rows = run_query(
+            "select ip, hostname, tower_name, description from devices where tower_name is not null",
+            fetch=True, dict_cursor=True
+        ) or []
+        buckets = {}
+        for r in rows:
+            name = (r.get("tower_name") or "ungrouped").strip()
+            if name not in buckets:
+                buckets[name] = []
+            buckets[name].append({
+                "device_ip": r.get("ip"),
+                "hostname": r.get("hostname"),
+                "description": r.get("description")
+            })
+        out = [{"name": name, "devices": buckets[name]} for name in sorted(buckets.keys())]
+        return out
+    except Exception as e:
+        logger.exception("api_towers_list failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/dashboard/{device_ip}", response_model=DeviceDashboard)
 def get_device_dashboard(device_ip: str):

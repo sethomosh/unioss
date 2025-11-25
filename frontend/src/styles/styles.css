@@ -246,6 +246,18 @@ a:hover {
   color: var(--accent);
 }
 
+/* force offset for fixed header to prevent overlap */
+.min-h-screen > header + .flex,
+.min-h-screen > header + div {
+  padding-top: 4rem !important; /* 4rem == h-16 (64px). change if topbar changes */
+}
+
+/* make sure header is the expected height */
+.min-h-screen > header {
+  height: 4rem !important;
+  box-sizing: border-box;
+}
+
 /* Buttons */
 button {
   border-radius: var(--radius);

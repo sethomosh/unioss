@@ -1,6 +1,8 @@
 # backend/modules/alerter.py
 import os
 import logging
+import json
+import re
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -29,6 +31,102 @@ ERRORS_WARN_DELTA = int(os.getenv("ALERT_ERRORS_WARN_DELTA", "10"))
 
 # dedupe window in minutes
 DEDUPE_MINUTES = int(os.getenv("ALERT_DEDUPE_MINUTES", "15"))
+
+
+
+try:
+    _os_rules = json.loads(os.getenv("ALERT_OS_RULES_JSON", "{}")) or {}
+except Exception:
+    _os_rules = {}
+
+DEFAULT_OS_RULES = {
+    "ubiquiti": {"warn_version": "1.10.0", "critical_below": "1.8.0"},
+    "cisco": {"warn_version": "16.9.0", "critical_below": "12.4.0"},
+    "mikrotik": {"warn_version": "6.45.0", "critical_below": "6.40.0"},
+}
+for k, v in DEFAULT_OS_RULES.items():
+    if k not in _os_rules:
+        _os_rules[k] = v
+
+_version_re = re.compile(r"(\d+(?:\.\d+)+)")
+
+def _parse_version_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    m = _version_re.search(str(text))
+    if m:
+        return m.group(1)
+    return None
+
+def _cmp_version(a: str, b: str) -> int:
+    """
+    compare dotted numeric versions loosely.
+    returns -1 if a<b, 0 if equal, +1 if a>b
+    """
+    try:
+        aa = [int(x) for x in re.findall(r'\d+', str(a))]
+        bb = [int(x) for x in re.findall(r'\d+', str(b))]
+        n = max(len(aa), len(bb))
+        aa += [0] * (n - len(aa))
+        bb += [0] * (n - len(bb))
+        for ai, bi in zip(aa, bb):
+            if ai < bi: return -1
+            if ai > bi: return 1
+        return 0
+    except Exception:
+        if str(a) == str(b): return 0
+        return -1 if str(a) < str(b) else 1
+
+def evaluate_os_and_maybe_alert(device_ip: str, sysdescr: Optional[str] = None, sysobject: Optional[str] = None, vendor_key: Optional[str] = None, model: Optional[str] = None) -> None:
+    """
+    Evaluate OS/version and insert alerts if device runs an OS below configured thresholds.
+    - vendor_key: normalized vendor key (lowercase) if known
+    - sysdescr: raw sysDescr (string) from SNMP
+    - sysobject: sysObjectID (string) from SNMP
+    - model: optional model hint
+    """
+    try:
+        vendor = (vendor_key or "").strip().lower() or None
+        parsed_version = _parse_version_from_text(sysdescr) or _parse_version_from_text(sysobject)
+
+        # select rule
+        rule = None
+        if vendor and vendor in _os_rules:
+            rule = _os_rules[vendor]
+        else:
+            if model:
+                mk = model.lower()
+                for vk, rv in _os_rules.items():
+                    if vk in mk:
+                        rule = rv
+                        break
+
+        if not rule:
+            return
+
+        warn_v = rule.get("warn_version")
+        crit_v = rule.get("critical_below")
+        cat = f"os.{vendor or 'unknown'}"
+
+        if not parsed_version:
+            # cannot parse numeric version — alert so operator inspects raw sysDescr
+            if not _recent_alert_exists(device_ip, cat):
+                _insert_alert(device_ip, "warning", f"unable to parse os version from sysDescr; sysDescr='{str(sysdescr)[:120]}'", cat)
+            return
+
+        if crit_v and _cmp_version(parsed_version, crit_v) < 0:
+            if not _recent_alert_exists(device_ip, cat):
+                _insert_alert(device_ip, "critical", f"os version {parsed_version} is below critical threshold ({crit_v}) for vendor={vendor}", cat)
+            return
+
+        if warn_v and _cmp_version(parsed_version, warn_v) < 0:
+            if not _recent_alert_exists(device_ip, cat):
+                _insert_alert(device_ip, "warning", f"os version {parsed_version} is below warning threshold ({warn_v}) for vendor={vendor}", cat)
+            return
+
+    except Exception:
+        logger.exception("evaluate_os_and_maybe_alert failed for %s", device_ip)
+
 
 
 def _recent_alert_exists(device_ip: str, category: Optional[str], window_minutes: int = DEDUPE_MINUTES) -> bool:
