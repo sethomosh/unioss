@@ -157,6 +157,20 @@ def _insert_alert(device_ip: str, severity: str, message: str, category: Optiona
         logger.exception("failed inserting alert for %s", device_ip)
         return False
 
+def _get_thresholds_from_db(device_ip: str, interface_index: int):
+    try:
+        rows = run_query(
+            "SELECT warn_dbm, high_dbm, critical_dbm FROM signal_thresholds WHERE device_ip=%s AND interface_index=%s LIMIT 1",
+            params=(device_ip, interface_index),
+            fetch=True,
+            dict_cursor=True
+        ) or []
+        if rows:
+            r = rows[0]
+            return (r.get("warn_dbm"), r.get("high_dbm"), r.get("critical_dbm"))
+    except Exception:
+        logger.exception("failed reading signal_thresholds for %s iface %s", device_ip, interface_index)
+    return (None, None, None)
 
 def evaluate_performance_and_maybe_alert(device_ip: str, new_row: Dict[str, Any], prev_row: Optional[Dict[str, Any]] = None) -> None:
     """
@@ -244,9 +258,54 @@ def evaluate_traffic_and_maybe_alert(device_ip: str, interface_index: int, new_i
         logger.exception("evaluate_traffic_and_maybe_alert failed for %s", device_ip)
 
 
-def evaluate_signal_and_maybe_alert(device_ip: str, interface_index: int, rssi_pct: Optional[float], snr_db: Optional[float]) -> None:
+def evaluate_signal_and_maybe_alert(device_ip: str, interface_index: int, rssi_pct: Optional[float], snr_db: Optional[float], rssi_dbm: Optional[float] = None) -> None:
+    """
+    prefer absolute dbm thresholds from DB per-device/interface;
+    fallback to env percent thresholds when dbm is not available.
+
+    arguments:
+      - rssi_dbm: absolute dBm when available (preferred)
+      - rssi_pct: percent-normalized value (old behavior)
+    """
     try:
         iface = f"if{interface_index}"
+        # read per-interface thresholds from DB
+        warn_dbm, high_dbm, crit_dbm = _get_thresholds_from_db(device_ip, interface_index)
+
+        # fallback env default DBM thresholds if DB has no row
+        # negative dBm values (e.g. -70) are expected
+        try:
+            crit_dbm = float(crit_dbm) if crit_dbm is not None else float(os.getenv("ALERT_RSSI_CRITICAL_DBM", "-85"))
+            high_dbm = float(high_dbm) if high_dbm is not None else float(os.getenv("ALERT_RSSI_HIGH_DBM", "-75"))
+            warn_dbm = float(warn_dbm) if warn_dbm is not None else float(os.getenv("ALERT_RSSI_WARN_DBM", "-70"))
+        except Exception:
+            # safe defaults if conversion fails
+            crit_dbm, high_dbm, warn_dbm = -85.0, -75.0, -70.0
+
+        # if we have a dbm value prefer it
+        if rssi_dbm is not None:
+            try:
+                dbm = float(rssi_dbm)
+            except Exception:
+                dbm = None
+            if dbm is not None:
+                # note: more negative -> worse signal
+                if dbm <= crit_dbm:
+                    cat = f"signal.{iface}"
+                    if not _recent_alert_exists(device_ip, cat):
+                        _insert_alert(device_ip, "critical", f"rssi very low {dbm} dBm on {iface}", cat)
+                    return
+                if dbm <= high_dbm:
+                    cat = f"signal.{iface}"
+                    if not _recent_alert_exists(device_ip, cat):
+                        _insert_alert(device_ip, "high", f"rssi low {dbm} dBm on {iface}", cat)
+                elif dbm <= warn_dbm:
+                    cat = f"signal.{iface}"
+                    if not _recent_alert_exists(device_ip, cat):
+                        _insert_alert(device_ip, "warning", f"rssi moderate {dbm} dBm on {iface}", cat)
+                return
+
+        # fallback: percent-based behavior (keeps backwards compatibility)
         if rssi_pct is not None:
             if rssi_pct <= RSSI_CRITICAL:
                 cat = f"signal.{iface}"
@@ -261,7 +320,5 @@ def evaluate_signal_and_maybe_alert(device_ip: str, interface_index: int, rssi_p
                 cat = f"signal.{iface}"
                 if not _recent_alert_exists(device_ip, cat):
                     _insert_alert(device_ip, "warning", f"rssi moderate {rssi_pct}% on {iface}", cat)
-
-        # optionally snr checks here
     except Exception:
         logger.exception("evaluate_signal_and_maybe_alert failed for %s", device_ip)

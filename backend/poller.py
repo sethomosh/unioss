@@ -57,6 +57,104 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _poll_semaphore
 
 
+
+
+
+
+
+def populate_signal_thresholds(days: int = 14):
+    """
+    compute percentiles from signal_metrics (last `days`) and upsert into signal_thresholds.
+    synchronous DB operation — call from executor.
+    """
+    sql = """
+    INSERT INTO signal_thresholds (device_ip, interface_index, warn_dbm, high_dbm, critical_dbm, computed_at)
+    WITH ordered AS (
+    SELECT
+        device_ip,
+        interface_index,
+        rssi_dbm,
+        ROW_NUMBER() OVER (PARTITION BY device_ip, interface_index ORDER BY rssi_dbm) - 1 AS rn,
+        COUNT(*) OVER (PARTITION BY device_ip, interface_index) AS cnt
+    FROM signal_metrics
+    WHERE rssi_dbm IS NOT NULL
+        AND timestamp >= DATE_SUB(NOW(), INTERVAL {days} DAY)
+    ),
+    quantiles AS (
+    SELECT
+        device_ip,
+        interface_index,
+        rssi_dbm,
+        rn,
+        cnt,
+        rn / GREATEST(1.0, cnt - 1) AS frac
+    FROM ordered
+    ),
+    stats AS (
+    SELECT
+        device_ip,
+        interface_index,
+        MIN(CASE WHEN frac >= 0.05 THEN rssi_dbm END) AS p5,
+        MIN(CASE WHEN frac >= 0.20 THEN rssi_dbm END) AS p20,
+        MIN(CASE WHEN frac >= 0.40 THEN rssi_dbm END) AS p40
+    FROM quantiles
+    GROUP BY device_ip, interface_index
+    )
+    SELECT device_ip, interface_index, p40 AS warn_dbm, p20 AS high_dbm, p5 AS critical_dbm, NOW()
+    FROM stats
+    ON DUPLICATE KEY UPDATE
+    warn_dbm = VALUES(warn_dbm),
+    high_dbm = VALUES(high_dbm),
+    critical_dbm = VALUES(critical_dbm),
+    computed_at = VALUES(computed_at);
+    """
+
+    conn = None
+    cur = None
+    try:
+        logger.info("populate_signal_thresholds: computing thresholds for last %s days", days)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # only this execute is needed
+        cur.execute(sql.format(days=int(days)))
+        affected = cur.rowcount
+        conn.commit()
+        return affected
+    except Exception as e:
+        logger.exception("populate_signal_thresholds failed: %s", e)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return 0
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+async def _thresholds_refresh_loop(interval_hours: int, days: int = 14):
+    """
+    background task: refresh thresholds every interval_hours.
+    call with asyncio.create_task(_thresholds_refresh_loop(...)) from startup if interval_hours > 0
+    """
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            await loop.run_in_executor(None, populate_signal_thresholds, days)
+        except Exception:
+            logger.exception("thresholds refresh job failed")
+        await asyncio.sleep(max(60, int(interval_hours * 3600)))
+
+
 def _to_finite_float(val, default=0.0) -> float:
     if val is None:
         return float(default)
@@ -86,6 +184,11 @@ def _to_int(val, default=0) -> int:
 # _last_counters stores raw octet counters + timestamp per device+ifIndex
 # key: f"{device_ip}:{if_index}" -> {"in": int, "out": int, "ts": float}
 _last_counters: Dict[str, Dict[str, Any]] = {}
+
+# consecutive alert gate to reduce flapping (in-memory)
+_signal_consec: Dict[str, int] = {}
+N_CONSECUTIVE = int(os.getenv("UNISYS_SIGNAL_N_CONSECUTIVE", "2"))
+
 
 # _last_saved_traffic stores last values that were inserted into DB, so we avoid duplicate inserts
 # key: f"{device_ip}:{if_index}" -> {"in_kbps": float, "out_kbps": float, "in_errors": int, "out_errors": int}
@@ -672,6 +775,49 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                                         ip, 1, inbound_kbps, outbound_kbps, None, None, in_errors, out_errors)
                 await loop.run_in_executor(None, alerter.evaluate_performance_and_maybe_alert,
                                         ip, perf_row, None)
+                try:
+                    import hashlib, time as _time
+                    epoch_slot = int(_time.time() / max(1, POLL_INTERVAL_SECONDS))
+                    toggle = epoch_slot % 2
+
+                    base_raw = int(hashlib.md5(ip.encode()).hexdigest()[:8], 16) % 40  # 0..39
+                    # map to -50 .. -90 range roughly (higher base_raw -> worse signal)
+                    base_dbm = -50.0 - (base_raw * 1.0)
+
+                    # small oscillation so some polls cross thresholds
+                    jitter = - (toggle * 3.0)  # either 0 or -3 dBm
+                    fake_rssi_dbm = round(base_dbm + jitter, 1)
+                    fake_snr = round(20.0 - (base_raw % 10), 1)  # simple snr fallback
+                    fake_pct = rssi_to_pct(fake_rssi_dbm)
+
+                    sig_row = {
+                        "device_ip": ip,
+                        "interface_index": 1,
+                        "interface_name": "eth0",
+                        "rssi_dbm": float(fake_rssi_dbm),
+                        "rssi_pct": float(fake_pct),
+                        "snr_db": float(fake_snr),
+                        "tx_rate_mbps": None,
+                        "rx_rate_mbps": None,
+                        "link_quality_pct": None,
+                        "frequency_mhz": None,
+                        "raw_blob": None,
+                        "timestamp": _dt.utcnow(),
+                    }
+
+                    # save and update in-memory snapshot (so _should_save_signal still works)
+                    save_signal_metrics([sig_row])
+                    _record_saved_signal(f"{ip}:1", sig_row)
+
+                    # call alerter with absolute dbm (alerter will consult DB thresholds)
+                    await loop.run_in_executor(
+                        None,
+                        alerter.evaluate_signal_and_maybe_alert,
+                        ip, 1, sig_row["rssi_pct"], sig_row["snr_db"], sig_row["rssi_dbm"]
+                    )
+                except Exception:
+                    logger.exception("failed to synthesize/evaluate fake signal row for %s", ip)
+
                 return
             # --- REAL SNMP mode ---
             # first, sync interfaces for device_interfaces table (non-blocking in executor)
@@ -817,12 +963,56 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                         try:
                             save_signal_metrics([r_row])
                             _record_saved_signal(sig_key, r_row)
-                            # evaluate signal alerts (run in executor)
-                            await loop.run_in_executor(None, alerter.evaluate_signal_and_maybe_alert,
-                                                    ip, int(idx), r_row.get("rssi_pct"), r_row.get("snr_db"))
+
+                            # gate noisy single-sample blips: require N_CONSECUTIVE polls below a threshold
+                            dbm = r_row.get("rssi_dbm")
+                            if dbm is not None:
+                                try:
+                                    dbm_val = float(dbm)
+                                except Exception:
+                                    dbm_val = None
+
+                                # quick gate using env fallback thresholds (avoids a DB call on every poll)
+                                try:
+                                    crit_dbm = float(os.getenv("ALERT_RSSI_CRITICAL_DBM", "-85"))
+                                    high_dbm = float(os.getenv("ALERT_RSSI_HIGH_DBM", "-75"))
+                                    warn_dbm = float(os.getenv("ALERT_RSSI_WARN_DBM", "-70"))
+                                except Exception:
+                                    crit_dbm, high_dbm, warn_dbm = -85.0, -75.0, -70.0
+
+                                below = False
+                                if dbm_val is not None:
+                                    if dbm_val <= crit_dbm:
+                                        below = "critical"
+                                    elif dbm_val <= high_dbm:
+                                        below = "high"
+                                    elif dbm_val <= warn_dbm:
+                                        below = "warn"
+
+                                sig_key = f"{ip}:{idx}"
+                                if below:
+                                    _signal_consec[sig_key] = _signal_consec.get(sig_key, 0) + 1
+                                else:
+                                    _signal_consec[sig_key] = 0
+
+                                # only call the alerter once we have N_CONSECUTIVE below-threshold polls
+                                if _signal_consec.get(sig_key, 0) >= N_CONSECUTIVE:
+                                    await loop.run_in_executor(
+                                        None,
+                                        alerter.evaluate_signal_and_maybe_alert,
+                                        ip, int(idx), r_row.get("rssi_pct"), r_row.get("snr_db")
+                                    )
+                            else:
+                                
+                                # dbm not present: fall back to percent-based immediate evaluation
+                                await loop.run_in_executor(
+                                    None,
+                                    alerter.evaluate_signal_and_maybe_alert,
+                                    ip, int(idx), r_row.get("rssi_pct"), r_row.get("snr_db")
+                                )
                         except Exception:
                             logger.exception("failed to save or evaluate signal row for %s", ip)
-                            
+                                
                 if _should_save_traffic(key, inbound_kbps, outbound_kbps, new_in_err, new_out_err):
                     prev_saved = _last_saved_traffic.get(key)
                     prev_in = prev_saved["in_kbps"] if prev_saved else None
@@ -989,6 +1179,25 @@ async def poll_loop(fake: bool = True, interval: int = POLL_INTERVAL_SECONDS):
             logger.info("backfilled %s missing performance rows at startup", backfilled)
         except Exception:
             logger.exception("backfill failed")
+    # --- populate signal thresholds at startup (optional) ---
+    POPULATE_THRESHOLDS = os.getenv("UNISYS_POPULATE_THRESHOLDS_ON_START", "true").lower() in ("1", "true", "yes")
+    THRESHOLDS_DAYS = int(os.getenv("UNISYS_THRESHOLDS_DAYS", "14"))
+    THRESHOLDS_REFRESH_HOURS = int(os.getenv("UNISYS_THRESHOLDS_REFRESH_HOURS", "0"))  # 0 disables periodic refresh
+
+    if POPULATE_THRESHOLDS:
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, populate_signal_thresholds, THRESHOLDS_DAYS)
+            logger.info("populate_signal_thresholds completed (days=%s)", THRESHOLDS_DAYS)
+        except Exception:
+            logger.exception("populate_signal_thresholds on start failed")
+
+    if THRESHOLDS_REFRESH_HOURS and THRESHOLDS_REFRESH_HOURS > 0:
+        try:
+            asyncio.create_task(_thresholds_refresh_loop(THRESHOLDS_REFRESH_HOURS, THRESHOLDS_DAYS))
+            logger.info("started thresholds refresh loop every %s hours", THRESHOLDS_REFRESH_HOURS)
+        except Exception:
+            logger.exception("failed to start thresholds refresh loop")
 
     while True:
         start = time.time()
