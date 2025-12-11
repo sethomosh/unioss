@@ -54,6 +54,8 @@ snmp-sim/data/*.bak*
 *.snmprec.bak*
 *.snmprec.strip_bak
 snmp-sim/data_quarantine_*/
+/data/*
+docker-compose.override.yml
 
 # snmprec test/utility scripts
 fix_*.py
