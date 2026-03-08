@@ -5,11 +5,11 @@ import { Link } from 'react-router-dom';
 import TowerWidget from '../components/TowerWidget';
 
 export const DevicesPage = () => {
-  const [devices, setDevices] = useState<Device[]>([]);
+  const [, setDevices] = useState<Device[]>([]);
   const [towersList, setTowersList] = useState<{ name: string; devices: Device[] }[]>([]);
   const [filterTower, setFilterTower] = useState<string | null>(null);
   const [performance, setPerformance] = useState<Record<string, PerformanceMetrics>>({});
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [, setSessions] = useState<Session[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -135,12 +135,6 @@ export const DevicesPage = () => {
     };
   }, [loadAllOnce]);
 
-  const getLatestSessionForDevice = (ip: string): Session | null => {
-    const ds = sessions.filter(s => s.device_ip === ip && s.start_time);
-    if (ds.length === 0) return null;
-    ds.sort((a, b) => (b.start_time || '').localeCompare(a.start_time || ''));
-    return ds[0];
-  };
 
   if (loading) return <div className="p-6 text-center text-muted-foreground">Loading devices…</div>;
 

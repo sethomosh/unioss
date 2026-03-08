@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     environment:
-      MYSQL_DATABASE: ${MYSQL_DB}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -34,7 +34,7 @@ services:
       MYSQL_HOST: db
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_DB: ${MYSQL_DB}
+      MYSQL_DB: ${MYSQL_DATABASE}
       SNMP_HOST: snmpsim
       SNMP_PORT: 1161
       SNMP_COMMUNITY: public
@@ -109,6 +109,7 @@ services:
     env_file:
       - .env
     environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
       UNIOSS_MAX_CONCURRENT_POLLS: "4"
       UNIOSS_MODE: fake
       UNIOSS_POLL_INTERVAL: "5"

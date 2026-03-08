@@ -33,19 +33,16 @@ RUN apt-get update \
 RUN mkdir -p /app/logs && chmod -R a+rwX /app/logs
 
 # Copy the application packages into the image
-# Make sure the top-level `app/` package (FastAPI) is present,
-# and keep backend/ if you still have helpers there.
-COPY app /app/app
 COPY backend /app/backend
 
-# Ensure /app is on sys.path (WORKDIR is /app so imports of 'app' work)
+# Ensure /app is on sys.path
 ENV PYTHONPATH=/app:${PYTHONPATH:-}
 
-# Expose port and default command (uvicorn)
+# Expose port and default command
 EXPOSE 5000
 
 ENTRYPOINT ["/usr/local/bin/wait-for-it.sh", "--timeout=60", "db:3306", "--"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000", "--workers", "4"]
+CMD ["gunicorn", "-b", "0.0.0.0:5000", "--workers", "4", "backend.app_flask:app"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \
     CMD curl -f http://localhost:5000/health || exit 1

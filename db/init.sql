@@ -1,8 +1,5 @@
--- db/init_full.sql
--- 1. Setup Database
-DROP DATABASE IF EXISTS `unioss`;
-CREATE DATABASE `unioss` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE `unioss`;
+-- Schema for UNIOSS
+-- The database is created automatically by the Docker entrypoint using MYSQL_DATABASE
 
 -- 2. Create Tables
 -- devices table
