@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { apiService } from '../services/apiService';
 
 type UserRole = 'Administrator' | 'Operator' | 'Viewer' | 'Auditor';
 
@@ -15,6 +16,7 @@ interface AuthContextType {
   logout: () => void;
   hasPermission: (permission: string) => boolean;
   canAccessPage: (page: string) => boolean;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -25,23 +27,41 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Load user from localStorage on app start
+  // Validate session against backend on app start
   useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
+    const validateSession = async () => {
       try {
-        setUser(JSON.parse(savedUser));
+        const savedUserStr = localStorage.getItem('user');
+        if (!savedUserStr) {
+          setLoading(false);
+          return;
+        }
+
+        const backendUser = await apiService.getCurrentUser();
+        if (backendUser) {
+          setUser({ ...JSON.parse(savedUserStr), ...backendUser });
+        } else {
+          // session invalid
+          setUser(null);
+          localStorage.removeItem('user');
+        }
       } catch (e) {
-        console.error('Failed to parse saved user', e);
+        console.error('Session validation failed', e);
+        setUser(null);
+        localStorage.removeItem('user');
+      } finally {
+        setLoading(false);
       }
-    }
+    };
+    validateSession();
   }, []);
 
   const login = async (username: string, password: string): Promise<boolean> => {
     // In a real implementation, this would call an authentication API
     // For now, we'll simulate authentication with mock users
-    
+
     // Mock users database
     const mockUsers: User[] = [
       { id: '1', username: 'admin', email: 'admin@example.com', role: 'Administrator' },
@@ -49,17 +69,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
       { id: '3', username: 'viewer', email: 'viewer@example.com', role: 'Viewer' },
       { id: '4', username: 'auditor', email: 'auditor@example.com', role: 'Auditor' },
     ];
-    
+
     // Find user (in real app, this would be an API call)
     const foundUser = mockUsers.find(u => u.username === username);
-    
+
     // Simulate password check (in real app, this would be server-side)
     if (foundUser && password === 'password') { // Using a fixed password for demo
       setUser(foundUser);
       localStorage.setItem('user', JSON.stringify(foundUser));
       return true;
     }
-    
+
     return false;
   };
 
@@ -70,7 +90,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const hasPermission = (permission: string): boolean => {
     if (!user) return false;
-    
+
     // Define permissions for each role
     const permissions: Record<UserRole, string[]> = {
       Administrator: [
@@ -128,13 +148,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         'view_audit_logs'
       ]
     };
-    
+
     return permissions[user.role].includes(permission);
   };
 
   const canAccessPage = (page: string): boolean => {
     if (!user) return false;
-    
+
     // Define page access for each role
     const pageAccess: Record<UserRole, string[]> = {
       Administrator: [
@@ -185,7 +205,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         'analytics'
       ]
     };
-    
+
     return pageAccess[user.role].includes(page);
   };
 
@@ -194,7 +214,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     login,
     logout,
     hasPermission,
-    canAccessPage
+    canAccessPage,
+    loading
   };
 
   return (

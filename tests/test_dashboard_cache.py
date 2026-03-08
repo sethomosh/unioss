@@ -15,7 +15,7 @@ def test_devices_dashboard_uses_cache(client):
     # The test assumes the app is using a redis instance on default host/port.
     import os, redis
     try:
-        r = redis.Redis(host=os.getenv("UNISYS_REDIS_HOST", "localhost"), port=int(os.getenv("UNISYS_REDIS_PORT", 6379)))
+        r = redis.Redis(host=os.getenv("UNIOSS_REDIS_HOST", "localhost"), port=int(os.getenv("UNIOSS_REDIS_PORT", 6379)))
         cache_key = f"dashboard_{params['period_hours']}_{params['interval_minutes']}_{params['top_interfaces_limit']}"
         cached = r.get(cache_key)
         # either cached is present or redis not available; assert either is true

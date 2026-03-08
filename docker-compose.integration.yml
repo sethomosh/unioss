@@ -1,6 +1,6 @@
 services:
   snmpsim:
-    image: unisys/local-snmpsim:dev
+    image: unioss/local-snmpsim:dev
     ports:
       - "1161:1161/udp"
     volumes:

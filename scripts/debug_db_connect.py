@@ -4,11 +4,11 @@
 import os, mysql.connector, traceback
 
 cfg = {
-    "host": os.getenv("UNISYS_DB_HOST", "127.0.0.1"),
-    "user": os.getenv("UNISYS_DB_USER", "unisys_user"),
-    "password": os.getenv("UNISYS_DB_PASS", "StrongP@ssw0rd"),
-    "database": os.getenv("UNISYS_DB_NAME", "unioss"),
-    "port": int(os.getenv("UNISYS_DB_PORT", 3307)),
+    "host": os.getenv("UNIOSS_DB_HOST", "127.0.0.1"),
+    "user": os.getenv("UNIOSS_DB_USER", "unioss_user"),
+    "password": os.getenv("UNIOSS_DB_PASS", "StrongP@ssw0rd"),
+    "database": os.getenv("UNIOSS_DB_NAME", "unioss"),
+    "port": int(os.getenv("UNIOSS_DB_PORT", 3307)),
     "autocommit": True,
 }
 

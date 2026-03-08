@@ -14,8 +14,8 @@ TRAFFIC_ENDPOINT = os.getenv("TRAFFIC_ENDPOINT", "/traffic/interfaces")
 db_config = {
     "host": os.getenv("MYSQL_HOST", "localhost"),
     "port": int(os.getenv("MYSQL_PORT", 3306)),
-    "database": os.getenv("MYSQL_DB", "unisys"),
-    "user": os.getenv("MYSQL_USER", "unisys_user"),
+    "database": os.getenv("MYSQL_DB", "unioss"),
+    "user": os.getenv("MYSQL_USER", "unioss_user"),
     "password": os.getenv("MYSQL_PASSWORD", "StrongP@ssw0rd")
 }
 

@@ -11,7 +11,7 @@ type TopbarProps = {
   onSidebarToggle?: () => void;
 };
 
-const Topbar: React.FC<TopbarProps> = ({ title = 'Dashboard', onSidebarToggle }) => {
+const Topbar: React.FC<TopbarProps> = ({ onSidebarToggle }) => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);

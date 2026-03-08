@@ -27,23 +27,23 @@ from backend.db.traffic_dao import save_traffic_metrics
 from backend.db.signal_dao import save_signal_metrics
 from backend.config.vendor_signal_oids import VENDOR_SIGNAL_OIDS, DEFAULT_OIDS
 
-logger = logging.getLogger("unisys_poller")
+logger = logging.getLogger("unioss_poller")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # configurable via env
-MAX_CONCURRENT_POLLS = int(os.getenv("UNISYS_MAX_CONCURRENT_POLLS", "20"))
-POLL_INTERVAL_SECONDS = int(os.getenv("UNISYS_POLL_INTERVAL", "30"))
+MAX_CONCURRENT_POLLS = int(os.getenv("UNIOSS_MAX_CONCURRENT_POLLS", "20"))
+POLL_INTERVAL_SECONDS = int(os.getenv("UNIOSS_POLL_INTERVAL", "15"))
 
-# optional backfill on start (opt-in)
-BACKFILL_ON_START = os.getenv("UNISYS_BACKFILL_ON_START", "false").lower() in ("1", "true", "yes")
+# to prevent duplicates when sending metrics
+BACKFILL_ON_START = os.getenv("UNIOSS_BACKFILL_ON_START", "false").lower() in ("1", "true", "yes")
 
 # thresholds for deciding "significant change" (traffic in kbps)
-TRAFFIC_DELTA_KBPS_THRESHOLD = float(os.getenv("UNISYS_TRAFFIC_KBPS_THRESHOLD", "1.0"))
+TRAFFIC_DELTA_KBPS_THRESHOLD = float(os.getenv("UNIOSS_TRAFFIC_KBPS_THRESHOLD", "1.0"))
 
 # signal jitter / persistence tuning (configurable via env)
-RSSI_TOLERANCE = float(os.getenv("UNISYS_RSSI_TOLERANCE", "0.1"))
-SIGNAL_JITTER_MODE = os.getenv("UNISYS_SIGNAL_JITTER_MODE", "device")  # "device" or "interface"
-SIGNAL_JITTER_SCALE = float(os.getenv("UNISYS_SIGNAL_JITTER_SCALE", "0.5"))
+RSSI_TOLERANCE = float(os.getenv("UNIOSS_RSSI_TOLERANCE", "0.1"))
+SIGNAL_JITTER_MODE = os.getenv("UNIOSS_SIGNAL_JITTER_MODE", "device")  # "device" or "interface"
+SIGNAL_JITTER_SCALE = float(os.getenv("UNIOSS_SIGNAL_JITTER_SCALE", "0.5"))
 
 
 
@@ -184,10 +184,11 @@ def _to_int(val, default=0) -> int:
 # _last_counters stores raw octet counters + timestamp per device+ifIndex
 # key: f"{device_ip}:{if_index}" -> {"in": int, "out": int, "ts": float}
 _last_counters: Dict[str, Dict[str, Any]] = {}
+_device_last_poll: Dict[str, float] = {}
 
 # consecutive alert gate to reduce flapping (in-memory)
 _signal_consec: Dict[str, int] = {}
-N_CONSECUTIVE = int(os.getenv("UNISYS_SIGNAL_N_CONSECUTIVE", "2"))
+N_CONSECUTIVE = int(os.getenv("UNIOSS_SIGNAL_N_CONSECUTIVE", "2"))
 
 
 # _last_saved_traffic stores last values that were inserted into DB, so we avoid duplicate inserts
@@ -728,6 +729,14 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
         logger.warning("device without ip in poll list: %s", device)
         return
 
+    poll_interval = device.get("poll_interval") or 15
+    now = time.time()
+    if now - _device_last_poll.get(ip, 0) < poll_interval:
+        return
+    _device_last_poll[ip] = now
+    
+    community = device.get("snmp_community") or os.getenv("SNMP_COMMUNITY", "public")
+
     sem = _get_semaphore()
     async with sem:
         start = time.time()
@@ -769,6 +778,22 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                 # save into DB (sync calls)
                 save_traffic_metrics([traffic_row])
                 save_performance_metrics_row(perf_row)
+
+                # update last_seen
+                try:
+                    conn = get_db_connection()
+                    cur = conn.cursor()
+                    cur.execute("UPDATE devices SET last_seen = %s WHERE ip = %s", (_dt.utcnow(), ip))
+                    conn.commit()
+                except Exception as e:
+                    logger.debug("could not update last_seen for fake device %s: %s", ip, e)
+                finally:
+                    if 'cur' in locals() and cur:
+                        try: cur.close()
+                        except: pass
+                    if 'conn' in locals() and conn:
+                        try: conn.close()
+                        except: pass
 
                 # evaluate alerts in executor so we don't block the event loop
                 await loop.run_in_executor(None, alerter.evaluate_traffic_and_maybe_alert,
@@ -822,14 +847,14 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
             # --- REAL SNMP mode ---
             # first, sync interfaces for device_interfaces table (non-blocking in executor)
             try:
-                await loop.run_in_executor(None, sync_device_interfaces, ip, os.getenv("SNMP_COMMUNITY", "public"), int(os.getenv("SNMP_PORT", "161")))
+                await loop.run_in_executor(None, sync_device_interfaces, ip, community, int(os.getenv("SNMP_PORT", "161")))
             except Exception as e:
                 logger.debug("interface sync failed for %s: %s", ip, e)
 
             # poll traffic counters (blocking) in executor
             try:
                 descr, in_oct, out_oct, in_err, out_err = await loop.run_in_executor(
-                    None, _poll_snmp_traffic, ip, os.getenv("SNMP_COMMUNITY", "public"), int(os.getenv("SNMP_PORT", "161"))
+                    None, _poll_snmp_traffic, ip, community, int(os.getenv("SNMP_PORT", "161"))
                 )
             except Exception as e:
                 logger.debug("snmp traffic poll failed for %s: %s", ip, e)
@@ -881,11 +906,11 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                 oids_map = VENDOR_SIGNAL_OIDS.get(vendor_key) or DEFAULT_OIDS or {}
 
                 signal_rows = []
-                if oids_map and os.getenv("UNISYS_MODE", "fake").lower() != "fake":
+                if oids_map and os.getenv("UNIOSS_MODE", "fake").lower() != "fake":
                     # build unique list of oids to fetch
                     oids = list(set([v for v in oids_map.values() if v]))
                     try:
-                        sig_res = snmp_get_bulk(ip, os.getenv("SNMP_COMMUNITY", "public"), oids, port=int(os.getenv("SNMP_PORT", "161")))
+                        sig_res = snmp_get_bulk(ip, community, oids, port=int(os.getenv("SNMP_PORT", "161")))
                     except Exception as e:
                         logger.debug("signal snmp_get_bulk failed for %s: %s", ip, e)
                         sig_res = {}
@@ -1064,20 +1089,20 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
 
             # poll performance metrics
             try:
-                cpu_val, mem_kb, uptime_secs = await loop.run_in_executor(None, _poll_snmp_performance, ip, os.getenv("SNMP_COMMUNITY", "public"), int(os.getenv("SNMP_PORT", "161")))
+                cpu_val, mem_kb, uptime_secs = await loop.run_in_executor(None, _poll_snmp_performance, ip, community, int(os.getenv("SNMP_PORT", "161")))
             except Exception as e:
                 logger.debug("snmp performance poll failed for %s: %s", ip, e)
                 cpu_val, mem_kb, uptime_secs = None, None, None
 
-            # fetch sysDescr + sysObjectID for os/version evaluation (non-blocking via executor)
+            sysdescr, sysobject = None, None
             try:
-                sysdescr = await loop.run_in_executor(None, snmp_get, ip, os.getenv("SNMP_COMMUNITY", "public"), "1.3.6.1.2.1.1.1.0", int(os.getenv("SNMP_PORT", "161")))
+                sysdescr = await loop.run_in_executor(None, snmp_get, ip, community, "1.3.6.1.2.1.1.1.0", int(os.getenv("SNMP_PORT", "161")))
             except Exception:
-                sysdescr = None
+                pass
             try:
-                sysobject = await loop.run_in_executor(None, snmp_get, ip, os.getenv("SNMP_COMMUNITY", "public"), "1.3.6.1.2.1.1.2.0", int(os.getenv("SNMP_PORT", "161")))
+                sysobject = await loop.run_in_executor(None, snmp_get, ip, community, "1.3.6.1.2.1.1.2.0", int(os.getenv("SNMP_PORT", "161")))
             except Exception:
-                sysobject = None
+                pass
 
             # persist os info into devices table when possible (best-effort)
             try:
@@ -1089,7 +1114,10 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                         m = re.search(r"(\d+(?:\.\d+)+)", str(sysdescr))
                         if m:
                             parsed_ver = m.group(1)
-                    cur.execute("UPDATE devices SET os_version = %s, sysdescr = %s WHERE ip = %s", (parsed_ver or None, str(sysdescr)[:1024] if sysdescr else None, ip))
+                    cur.execute(
+                        "UPDATE devices SET os_version = %s, sysdescr = %s, last_seen = %s WHERE ip = %s",
+                        (parsed_ver or None, str(sysdescr)[:1024] if sysdescr else None, _dt.utcnow(), ip)
+                    )
                     conn.commit()
                 except Exception:
                     try:
@@ -1129,6 +1157,36 @@ async def poll_device(device: Dict[str, Any], fake: bool = True):
                     await loop.run_in_executor(None, alerter.evaluate_os_and_maybe_alert, ip, sysdescr, sysobject, vendor_key, model)
                 except Exception:
                     logger.exception("failed to run evaluate_os_and_maybe_alert for %s", ip)
+                
+                # Update device status and offline reason based on limits
+                new_status = 'up'
+                offline_reason = None
+                
+                if os.getenv("UNIOSS_MODE", "fake").lower() != "fake":
+                    if cpu_val is None and not sysdescr:
+                        new_status = 'down'
+                        offline_reason = 'SNMP Timeout / Unreachable'
+                    elif cpu_val is not None and float(cpu_val) >= 99.0:
+                        new_status = 'down'
+                        offline_reason = 'High CPU / Overloaded'
+                    elif mem_kb is not None and float(mem_kb) >= 99.0:
+                        new_status = 'down'
+                        offline_reason = 'OOM / High Memory'
+                
+                try:
+                    conn_st = get_db_connection()
+                    cur_st = conn_st.cursor()
+                    cur_st.execute(
+                        "UPDATE devices SET status = %s, offline_reason = %s WHERE ip = %s",
+                        (new_status, offline_reason, ip)
+                    )
+                    conn_st.commit()
+                except Exception as set_err:
+                    logger.debug("Failed to update status for %s: %s", ip, set_err)
+                finally:
+                    if 'cur_st' in locals() and cur_st: cur_st.close()
+                    if 'conn_st' in locals() and conn_st: conn_st.close()
+
             except Exception as e:
                 logger.exception("failed to save perf row or run alerter for %s: %s", ip, e)               
         except Exception as e:
@@ -1145,7 +1203,7 @@ async def poll_all_devices(fake: bool = True):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         # if your devices table doesn't have status, adapt this query to fetch rows you want
-        cursor.execute("SELECT id, ip, vendor FROM devices WHERE status='up'")
+        cursor.execute("SELECT id, ip, vendor, snmp_community, poll_interval FROM devices WHERE status='up'")
         devices = cursor.fetchall() or []
         cursor.close()
         conn.close()
@@ -1180,9 +1238,9 @@ async def poll_loop(fake: bool = True, interval: int = POLL_INTERVAL_SECONDS):
         except Exception:
             logger.exception("backfill failed")
     # --- populate signal thresholds at startup (optional) ---
-    POPULATE_THRESHOLDS = os.getenv("UNISYS_POPULATE_THRESHOLDS_ON_START", "true").lower() in ("1", "true", "yes")
-    THRESHOLDS_DAYS = int(os.getenv("UNISYS_THRESHOLDS_DAYS", "14"))
-    THRESHOLDS_REFRESH_HOURS = int(os.getenv("UNISYS_THRESHOLDS_REFRESH_HOURS", "0"))  # 0 disables periodic refresh
+    POPULATE_THRESHOLDS = os.getenv("UNIOSS_POPULATE_THRESHOLDS_ON_START", "true").lower() in ("1", "true", "yes")
+    THRESHOLDS_DAYS = int(os.getenv("UNIOSS_THRESHOLDS_DAYS", "14"))
+    THRESHOLDS_REFRESH_HOURS = int(os.getenv("UNIOSS_THRESHOLDS_REFRESH_HOURS", "0"))  # 0 disables periodic refresh
 
     if POPULATE_THRESHOLDS:
         try:
@@ -1203,6 +1261,9 @@ async def poll_loop(fake: bool = True, interval: int = POLL_INTERVAL_SECONDS):
         start = time.time()
         try:
             await poll_all_devices(fake=fake)
+            
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, alerter.evaluate_unauthenticated_clients)
         except Exception:
             logger.exception("poll_all_devices raised an exception")
         elapsed = time.time() - start
@@ -1240,7 +1301,7 @@ def backfill_missing_performance_rows() -> int:
 
 
 if __name__ == "__main__":
-    env_mode = os.getenv("UNISYS_MODE", "fake").lower()
+    env_mode = os.getenv("UNIOSS_MODE", "fake").lower()
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--real", action="store_true", help="run in real snmp mode")

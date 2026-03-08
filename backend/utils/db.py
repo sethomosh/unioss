@@ -23,11 +23,11 @@ def _db_config() -> dict:
     Environment variables used: MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB
     """
     return {
-        "host": os.getenv("MYSQL_HOST", os.getenv("UNISYS_DB_HOST", "127.0.0.1")),
-        "port": int(os.getenv("MYSQL_PORT", os.getenv("UNISYS_DB_PORT", "3306"))),
-        "user": os.getenv("MYSQL_USER", os.getenv("UNISYS_DB_USER", "unisys_user")),
-        "password": os.getenv("MYSQL_PASSWORD", os.getenv("UNISYS_DB_PASS", "StrongP@ssw0rd")),
-        "database": os.getenv("MYSQL_DB", os.getenv("UNISYS_DB_NAME", "unioss")),
+        "host": os.getenv("MYSQL_HOST", os.getenv("UNIOSS_DB_HOST", "127.0.0.1")),
+        "port": int(os.getenv("MYSQL_PORT", os.getenv("UNIOSS_DB_PORT", "3306"))),
+        "user": os.getenv("MYSQL_USER", os.getenv("UNIOSS_DB_USER", "unioss_user")),
+        "password": os.getenv("MYSQL_PASSWORD", os.getenv("UNIOSS_DB_PASS", "StrongP@ssw0rd")),
+        "database": os.getenv("MYSQL_DB", os.getenv("UNIOSS_DB_NAME", "unioss")),
         # short timeout to avoid long blocking during container startup problems
         "connection_timeout": int(os.getenv("MYSQL_CONN_TIMEOUT", "10")),
     }

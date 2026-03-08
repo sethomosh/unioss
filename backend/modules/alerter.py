@@ -3,12 +3,14 @@ import os
 import logging
 import json
 import re
+import urllib.request
+import urllib.error
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from ..utils.db import run_query
 
-logger = logging.getLogger("unisys.alerter")
+logger = logging.getLogger("unioss.alerter")
 
 # thresholds (can override with env vars)
 CPU_CRITICAL = float(os.getenv("ALERT_CPU_CRITICAL", "90"))
@@ -19,15 +21,15 @@ MEM_CRITICAL = float(os.getenv("ALERT_MEM_CRITICAL", "90"))
 MEM_HIGH = float(os.getenv("ALERT_MEM_HIGH", "80"))
 MEM_WARN = float(os.getenv("ALERT_MEM_WARN", "70"))
 
-RSSI_CRITICAL = float(os.getenv("ALERT_RSSI_CRITICAL", "10"))
-RSSI_HIGH = float(os.getenv("ALERT_RSSI_HIGH", "25"))
-RSSI_WARN = float(os.getenv("ALERT_RSSI_WARN", "40"))
+RSSI_CRITICAL = float(os.getenv("ALERT_RSSI_CRITICAL", "5"))
+RSSI_HIGH = float(os.getenv("ALERT_RSSI_HIGH", "15"))
+RSSI_WARN = float(os.getenv("ALERT_RSSI_WARN", "25"))
 
 TRAFFIC_HIGH_KBPS = float(os.getenv("ALERT_TRAFFIC_HIGH_KBPS", "10000"))  # 10 Mbps default
-TRAFFIC_DROP_PCT = float(os.getenv("ALERT_TRAFFIC_DROP_PCT", "80"))  # percent drop
+TRAFFIC_DROP_PCT = float(os.getenv("ALERT_TRAFFIC_DROP_PCT", "95"))  # percent drop
 
-ERRORS_CRITICAL_DELTA = int(os.getenv("ALERT_ERRORS_CRITICAL_DELTA", "100"))
-ERRORS_WARN_DELTA = int(os.getenv("ALERT_ERRORS_WARN_DELTA", "10"))
+ERRORS_CRITICAL_DELTA = int(os.getenv("ALERT_ERRORS_CRITICAL_DELTA", "500"))
+ERRORS_WARN_DELTA = int(os.getenv("ALERT_ERRORS_WARN_DELTA", "50"))
 
 # dedupe window in minutes
 DEDUPE_MINUTES = int(os.getenv("ALERT_DEDUPE_MINUTES", "15"))
@@ -144,6 +146,31 @@ def _recent_alert_exists(device_ip: str, category: Optional[str], window_minutes
         return False
 
 
+def _notify_webhook(device_ip: str, severity: str, message: str, category: Optional[str] = None):
+    webhook_url = os.getenv("ALERT_WEBHOOK_URL")
+    if not webhook_url:
+        return
+        
+    # Only notify for critical or high
+    if severity.lower() not in ["critical", "high"]:
+        return
+        
+    payload = {
+        "text": f"*{severity.upper()} Alert* on `{device_ip}`\n*Category:* {category}\n*Message:* {message}"
+    }
+    
+    try:
+        req = urllib.request.Request(
+            webhook_url, 
+            data=json.dumps(payload).encode('utf-8'), 
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            logger.info("Sent webhook notification for alert on %s (%d)", device_ip, response.getcode())
+    except Exception as e:
+        logger.error("Failed to send webhook notification for %s: %s", device_ip, str(e))
+
+
 def _insert_alert(device_ip: str, severity: str, message: str, category: Optional[str] = None) -> bool:
     try:
         q = """
@@ -152,6 +179,10 @@ def _insert_alert(device_ip: str, severity: str, message: str, category: Optiona
         """
         run_query(q, params=(device_ip, severity, message, datetime.utcnow(), category), fetch=False, commit=True)
         logger.info("inserted alert: %s %s %s", device_ip, severity, category)
+        
+        # trigger external notification
+        _notify_webhook(device_ip, severity, message, category)
+        
         return True
     except Exception:
         logger.exception("failed inserting alert for %s", device_ip)
@@ -275,12 +306,12 @@ def evaluate_signal_and_maybe_alert(device_ip: str, interface_index: int, rssi_p
         # fallback env default DBM thresholds if DB has no row
         # negative dBm values (e.g. -70) are expected
         try:
-            crit_dbm = float(crit_dbm) if crit_dbm is not None else float(os.getenv("ALERT_RSSI_CRITICAL_DBM", "-85"))
-            high_dbm = float(high_dbm) if high_dbm is not None else float(os.getenv("ALERT_RSSI_HIGH_DBM", "-75"))
-            warn_dbm = float(warn_dbm) if warn_dbm is not None else float(os.getenv("ALERT_RSSI_WARN_DBM", "-70"))
+            crit_dbm = float(crit_dbm) if crit_dbm is not None else float(os.getenv("ALERT_RSSI_CRITICAL_DBM", "-90"))
+            high_dbm = float(high_dbm) if high_dbm is not None else float(os.getenv("ALERT_RSSI_HIGH_DBM", "-85"))
+            warn_dbm = float(warn_dbm) if warn_dbm is not None else float(os.getenv("ALERT_RSSI_WARN_DBM", "-80"))
         except Exception:
             # safe defaults if conversion fails
-            crit_dbm, high_dbm, warn_dbm = -85.0, -75.0, -70.0
+            crit_dbm, high_dbm, warn_dbm = -90.0, -85.0, -80.0
 
         # if we have a dbm value prefer it
         if rssi_dbm is not None:
@@ -322,3 +353,21 @@ def evaluate_signal_and_maybe_alert(device_ip: str, interface_index: int, rssi_p
                     _insert_alert(device_ip, "warning", f"rssi moderate {rssi_pct}% on {iface}", cat)
     except Exception:
         logger.exception("evaluate_signal_and_maybe_alert failed for %s", device_ip)
+
+def evaluate_unauthenticated_clients() -> None:
+    try:
+        q = """
+        SELECT s.mac, IFNULL(s.device_ip, s.ip) as dev_ip
+        FROM access_sessions s
+        LEFT JOIN client_acl a ON s.mac = a.mac_address AND (s.device_ip = a.device_ip OR s.ip = a.device_ip) AND a.status = 'allowed'
+        WHERE a.id IS NULL AND s.logout_time IS NULL AND s.mac IS NOT NULL
+        """
+        rows = run_query(q, fetch=True, dict_cursor=True) or []
+        for r in rows:
+            mac = r.get("mac")
+            dev_ip = r.get("dev_ip", "unknown")
+            cat = f"auth.unauthenticated.{mac}"
+            if not _recent_alert_exists(dev_ip, cat, window_minutes=60):
+                _insert_alert(dev_ip, "warning", f"Unauthenticated client session detected: {mac}", cat)
+    except Exception:
+        logger.exception("evaluate_unauthenticated_clients failed")

@@ -6,10 +6,10 @@ import logging
 from backend.poller import poll_all_devices
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("unisys_scheduler")
+logger = logging.getLogger("unioss_scheduler")
 
 INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))  # seconds between polls
-ENV_MODE = os.getenv("UNISYS_MODE", "fake").lower()
+ENV_MODE = os.getenv("UNIOSS_MODE", "fake").lower()
 FAKE_MODE = ENV_MODE != "real"
 
 async def scheduler_loop():

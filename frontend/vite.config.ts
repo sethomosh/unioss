@@ -7,34 +7,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      // Proxy /api/* → http://localhost:8000
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        rewrite: (path) => path,
-      },
-      // Proxy /snmp/* → http://localhost:8000
-      '/snmp': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path,
-      },
-      // Additional proxies to avoid CORS preflight hitting backend directly
-      '/discovery': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path,
-      },
-      '/alerts': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path,
-      },
-      '/traffic': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        ws: true, // keep this in case traffic uses websockets
-        rewrite: (path) => path,
       },
     }
   }

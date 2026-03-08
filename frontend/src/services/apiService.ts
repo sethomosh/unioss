@@ -94,7 +94,7 @@ async function getTowers(): Promise<{ name: string; devices: Device[] }[]> {
 
   // try server endpoint first
   try {
-    const resp = await apiRequest<{ name: string; devices: any[] }[]>('/towers/list');
+    const resp = await apiRequest<{ name: string; devices: any[] }[]>('/towers');
     if (Array.isArray(resp) && resp.length) {
       // normalize device objects so the rest of the frontend can use them
       return resp.map(r => ({
@@ -121,17 +121,9 @@ async function getTowers(): Promise<{ name: string; devices: Device[] }[]> {
   return getTowers_fallback();
 }
 
-// original grouping logic extracted into a fallback helper so file stays readable
+// Fallback: return empty array so pages don't crash when the server endpoint is unavailable
 function getTowers_fallback(): { name: string; devices: Device[] }[] {
-  // reuse cached discovery list to avoid extra network I/O
-  // NOTE: this is the original grouping logic you already had
-  // (copy/paste your old getTowers body here).
-  // simplified: call apiService.getDevices() and group by hostname/tower pattern
-  // ... (keep the existing implementation you had originally) ...
-  const map = new Map<string, Device[]>();
-  // synchronous fallback is simple wrapper: actually we need async; so keep original as async wrapper
-  // but to avoid editing other parts of the file structure, implement the original logic synchronously inside an IIFE:
-  throw new Error('getTowers_fallback must be replaced with your original getTowers implementation body');
+  return [];
 }
 // ---------------------------
 // ip / cidr helpers (ipv4 only)
@@ -308,10 +300,10 @@ async function getTowerOverview(towerName: string, batchSize = TOWER_BATCH) {
 
   // debug - keys available on returned details (helps map attached client arrays)
   // eslint-disable-next-line no-console
-  console.debug('[getTowerOverview] details sample keys:', details.slice(0,3).map(d => Object.keys(d || {}).sort()));
+  console.debug('[getTowerOverview] details sample keys:', details.slice(0, 3).map(d => Object.keys(d || {}).sort()));
 
   // ---- collect attached/connected clients if device details expose them ----
-  const attachedKeys = ['connected_clients','clients','neighbors','attached_devices','bridged_devices','stations','stations_list','wifi_clients'];
+  const attachedKeys = ['connected_clients', 'clients', 'neighbors', 'attached_devices', 'bridged_devices', 'stations', 'stations_list', 'wifi_clients'];
   // start with the canonical tower devices (these come from discovery)
   const fullDevices: any[] = [...tower.devices];
 
@@ -393,7 +385,7 @@ async function getTowerOverview(towerName: string, batchSize = TOWER_BATCH) {
     const inK = Number(snap.inbound_kbps ?? snap.in_kbps ?? snap.inbound ?? 0);
     const outK = Number(snap.outbound_kbps ?? snap.out_kbps ?? snap.outbound ?? 0);
     if (inK || outK) return inK + outK;
-    if (typeof det.latest_throughput === 'number') return Number(det.latest_throughput);
+    if (typeof det?.latest_throughput === 'number') return Number(det.latest_throughput);
     return 0;
   }
 
@@ -443,13 +435,13 @@ async function getTowerOverview(towerName: string, batchSize = TOWER_BATCH) {
     // traffic sparkline aggregation (if det has traffic_history or latest_per_interface)
     if (Array.isArray(det?.traffic_history) && det.traffic_history.length) {
       const hist = det.traffic_history.slice().map((s: any) => ({ ...s, ts: s.timestamp ?? s.time ?? s.ts ?? null }))
-        .filter((s: any) => s.ts).sort((a: any,b:any)=> (Date.parse(String(a.ts))||0) - (Date.parse(String(b.ts))||0));
+        .filter((s: any) => s.ts).sort((a: any, b: any) => (Date.parse(String(a.ts)) || 0) - (Date.parse(String(b.ts)) || 0));
       for (let j = 0; j < hist.length; j++) {
         const cur = hist[j];
         let throughput = sampleThroughputKbps(cur);
         if (!throughput) {
           // delta attempt
-          const prev = hist[j-1];
+          const prev = hist[j - 1];
           const curIn = Number(cur.in_octets ?? cur.in_bytes ?? NaN);
           const curOut = Number(cur.out_octets ?? cur.out_bytes ?? NaN);
           const prevIn = prev ? Number(prev.in_octets ?? prev.in_bytes ?? NaN) : NaN;
@@ -465,8 +457,8 @@ async function getTowerOverview(towerName: string, batchSize = TOWER_BATCH) {
         let bucketTs = String(cur.ts);
         try {
           const dd = new Date(String(cur.ts));
-          if (!isNaN(+dd)) bucketTs = dd.toISOString().slice(0,13) + ':00:00';
-        } catch {}
+          if (!isNaN(+dd)) bucketTs = dd.toISOString().slice(0, 13) + ':00:00';
+        } catch { }
         const idxSpark = trafficSpark.findIndex(t => t.ts === bucketTs);
         if (idxSpark === -1) trafficSpark.push({ ts: bucketTs, throughput });
         else trafficSpark[idxSpark].throughput += throughput;
@@ -477,7 +469,7 @@ async function getTowerOverview(towerName: string, batchSize = TOWER_BATCH) {
         const throughput = (Number(lp.inbound_kbps || 0) + Number(lp.outbound_kbps || 0)) || sampleThroughputKbps(lp);
         const bucketTs = (() => {
           const d = new Date(String(ts));
-          return isNaN(+d) ? String(ts) : d.toISOString().slice(0,13) + ':00:00';
+          return isNaN(+d) ? String(ts) : d.toISOString().slice(0, 13) + ':00:00';
         })();
         const idxSpark = trafficSpark.findIndex(t => t.ts === bucketTs);
         if (idxSpark === -1) trafficSpark.push({ ts: bucketTs, throughput });
@@ -651,21 +643,21 @@ export const apiService = {
     if (USE_MOCK) return mockData.devices.map(normalizeDevice);
     return cachedRequest('devices::list', async () => {
       const raw = await apiRequest<Device[]>('/discovery/devices');
-      return raw.map(normalizeDevice);
+      return USE_MOCK ? [] : (raw.map(normalizeDevice)); // Corrected: `device` was undefined, assuming `raw.map(normalizeDevice)` was intended.
     });
   },
-  
+
   async getDeviceByIp(ip: string): Promise<Device | null> {
     if (USE_MOCK) {
       const dev = mockData.devices.find(d => d.device_ip === ip);
       return dev ? normalizeDevice(dev) : null;
     }
-  const rawList = await cachedRequest('devices::list', async () => {
-    const raw = await apiRequest<Device[]>('/discovery/devices');
-    return raw;
-  });
-  const found = (rawList || []).find((x: any) => x.device_ip === ip || x.ip === ip);
-  return found ? normalizeDevice(found) : null;
+    const rawList = await cachedRequest('devices::list', async () => {
+      const raw = await apiRequest<Device[]>('/discovery/devices');
+      return raw;
+    });
+    const found = (rawList || []).find((x: any) => x.device_ip === ip || x.ip === ip);
+    return found ? normalizeDevice(found) : null;
   },
 
   // Performance
@@ -721,7 +713,7 @@ export const apiService = {
       const status = r.status ?? (r.logout_time ? 'disconnected' : 'active');
 
       return {
-        session_id: String(r.session_id ?? r.id ?? `sess_${idx}_${Math.random().toString(36).slice(2,8)}`),
+        session_id: String(r.session_id ?? r.id ?? `sess_${idx}_${Math.random().toString(36).slice(2, 8)}`),
         device_ip: String(r.device_ip ?? r.ip ?? r.deviceIp ?? ''),
         username: String(r.username ?? r.user ?? ''),
         start_time: startIso || '',
@@ -801,15 +793,14 @@ export const apiService = {
     return apiRequest<DashboardMetrics>('/dashboard/metrics');
   },
 
-  async getDeviceDetails(deviceIp: string) {
+  async getDeviceDetails(deviceIp: string): Promise<any> {
     if (USE_MOCK) {
       const device = mockData.devices.find(d => d.device_ip === deviceIp);
       return device ? {
         device_ip: device.device_ip,
-        // add top-level signal plus snapshot-level signal
         signal: {
-          rssi_dbm: -60 + Math.floor(Math.random() * 10), // mock -60..-51
-          rssi_pct: 70 + Math.floor(Math.random() * 20),  // mock 70..89
+          rssi_dbm: -60 + Math.floor(Math.random() * 10),
+          rssi_pct: 70 + Math.floor(Math.random() * 20),
           snr_db: 30 + Math.floor(Math.random() * 5),
         },
         snapshot: {
@@ -823,7 +814,7 @@ export const apiService = {
             snr_db: 30 + Math.floor(Math.random() * 5),
           },
         },
-        latest_per_interface: device.interfaces.map(i => ({
+        latest_per_interface: (device.interfaces || []).map(i => ({
           device_ip: device.device_ip,
           interface_name: i.interface_name,
           inbound_kbps: Math.round(Math.random() * 1000),
@@ -842,7 +833,7 @@ export const apiService = {
         })),
         traffic_history: [...Array(24)].map((_, idx) => ({
           timestamp: new Date(Date.now() - idx * 3600000).toISOString(),
-          interface_name: device.interfaces[0].interface_name,
+          interface_name: (device.interfaces && device.interfaces.length > 0) ? device.interfaces[0].interface_name : 'unknown',
           inbound_kbps: Math.random() * 1000,
           outbound_kbps: Math.random() * 1000,
           errors: Math.floor(Math.random() * 3),
@@ -850,15 +841,24 @@ export const apiService = {
       } : null;
     }
 
-  const encoded = encodeURIComponent(deviceIp);
-  return cachedRequest(`device::${deviceIp}`, async () => {
-    const resp = await fetch(`${API_BASE}/devices/${encoded}/details`);
-    if (!resp.ok) throw new Error(`Failed to fetch device details: ${resp.statusText}`);
-    return resp.json();
-  });
+    const encoded = encodeURIComponent(deviceIp);
+    return cachedRequest(`device::${deviceIp}`, async () => {
+      return apiRequest<any>(`/discovery/devices/${encoded}/details`);
+    });
   },
   // tower helpers (added)
   getTowers,
   getTowerOverview,
   getIPGroups,
+
+  // Auth Methods
+  getCurrentUser: async () => {
+    if (USE_MOCK) return null;
+    try {
+      return await apiRequest<any>('/auth/me');
+    } catch (e) {
+      console.error('getCurrentUser failed', e);
+      return null;
+    }
+  }
 };

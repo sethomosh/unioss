@@ -54,7 +54,7 @@ def process_template(template_path, output_path, hostname, if_count):
             normalized
             .replace("@hostname@", hostname)
             .replace("{SYSNAME}", hostname)
-            .replace("{VENDOR}", "unisys")
+            .replace("{VENDOR}", "unioss")
             .replace("{IP}", hostname)  # or map to actual ip
         )
 

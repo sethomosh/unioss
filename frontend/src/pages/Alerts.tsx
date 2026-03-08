@@ -50,7 +50,7 @@ export const Alerts: React.FC<AlertsProps> = ({ alerts: propsAlerts, onAcknowled
         const res = await apiService.getAlerts(5);
         if (!mounted) return;
         // backend could return { alerts: [...] } or an array.
-        const arr = Array.isArray(res) ? res : (res.alerts ?? []);
+        const arr = Array.isArray(res) ? res : ((res as any).alerts ?? []);
         setAlerts((arr as any[]).map(normalizeAlert));
       } catch (err) {
         console.error('Failed to fetch alerts', err);

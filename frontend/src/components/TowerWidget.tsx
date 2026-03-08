@@ -1,5 +1,5 @@
 // src/components/TowerWidget.tsx
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiService } from '../services/apiService';
 import {
   ResponsiveContainer,
@@ -67,26 +67,26 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
   // per-tower quick stats (used for selector badges)
   const perTowerStats = Array.isArray(towers)
     ? towers.map(t => {
-        const total = Array.isArray(t.devices) ? t.devices.length : 0;
-        const up = Array.isArray(t.devices)
-          ? t.devices.filter((d: any) => {
-              // canonical status check
-              const rawStatus = (d?.status ?? (typeof d?.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
-              if (String(rawStatus || '').toLowerCase() === 'up') return true;
+      const total = Array.isArray(t.devices) ? t.devices.length : 0;
+      const up = Array.isArray(t.devices)
+        ? t.devices.filter((d: any) => {
+          // canonical status check
+          const rawStatus = (d?.status ?? (typeof d?.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
+          if (String(rawStatus || '').toLowerCase() === 'up') return true;
 
-              // evidence-based heuristics: treat presence of recent fields as up
-              if (d?.last_seen || d?.lastSeen || d?.lastSeenAt) return true;
-              if (typeof d?.cpu_pct === 'number' && !Number.isNaN(d.cpu_pct)) return true;
-              if (d?.signal && (d.signal.rssi_dbm != null || d.signal.rssi_pct != null)) return true;
-              // some backends include snapshot / latest_per_interface
-              if (d?.snapshot?.timestamp || (Array.isArray(d?.latest_per_interface) && d.latest_per_interface.length)) return true;
-              // fallback: if device has traffic or interfaces arrays with values
-              if (Array.isArray(d?.interfaces) && d.interfaces.length) return true;
-              return false;
-            }).length
-          : 0;
-        return { name: t.name, total, up, down: Math.max(0, total - up) };
-      })
+          // evidence-based heuristics: treat presence of recent fields as up
+          if (d?.last_seen || d?.lastSeen || d?.lastSeenAt) return true;
+          if (typeof d?.cpu_pct === 'number' && !Number.isNaN(d.cpu_pct)) return true;
+          if (d?.signal && (d.signal.rssi_dbm != null || d.signal.rssi_pct != null)) return true;
+          // some backends include snapshot / latest_per_interface
+          if (d?.snapshot?.timestamp || (Array.isArray(d?.latest_per_interface) && d.latest_per_interface.length)) return true;
+          // fallback: if device has traffic or interfaces arrays with values
+          if (Array.isArray(d?.interfaces) && d.interfaces.length) return true;
+          return false;
+        }).length
+        : 0;
+      return { name: t.name, total, up, down: Math.max(0, total - up) };
+    })
     : [];
 
   useEffect(() => {
@@ -200,8 +200,8 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
       const rawStatus = (d?.status ?? (typeof d?.online === 'boolean' ? (d.online ? 'up' : 'down') : undefined));
       const hasLastSeen = !!(d?.last_seen || d?.lastSeen || d?.lastSeenAt);
       const hasTelemetry = (typeof d?.cpu_pct === 'number' && !Number.isNaN(d.cpu_pct)) ||
-                          (d?.signal && (d.signal.rssi_dbm != null || d.signal.rssi_pct != null)) ||
-                          (Array.isArray(d?.interfaces) && d.interfaces.length);
+        (d?.signal && (d.signal.rssi_dbm != null || d.signal.rssi_pct != null)) ||
+        (Array.isArray(d?.interfaces) && d.interfaces.length);
       const isUp = String(rawStatus || '').toLowerCase() === 'up' || hasLastSeen || !!hasTelemetry;
       return {
         device_ip: d.device_ip,
@@ -214,29 +214,29 @@ export default function TowerWidget({ onViewDevices, towersProp }: Props) {
   const upCount = overview?.counts?.up ?? deviceList.filter(d => d.status === 'up').length;
   const downCount = typeof overview?.counts?.down === 'number' ? overview.counts.down : Math.max(0, totalDevices - upCount);
   const downNames = deviceList.filter(d => d.status !== 'up').map(d => d.hostname);
-// robust tower online detection: prefer overview counts but fall back to telemetry evidence
-function isTowerOnline(): boolean {
-  // if overview exists, prefer its counts (but accept telemetry evidence even when counts.up === 0)
-  if (overview) {
-    if (overview.counts && overview.counts.up > 0) return true;
-    // evidence: avgCpu, avgRssi, traffic samples, or details containing snapshots/interfaces/signal
-    if ((overview.avgCpu && overview.avgCpu > 0) ||
+  // robust tower online detection: prefer overview counts but fall back to telemetry evidence
+  function isTowerOnline(): boolean {
+    // if overview exists, prefer its counts (but accept telemetry evidence even when counts.up === 0)
+    if (overview) {
+      if (overview.counts && overview.counts.up > 0) return true;
+      // evidence: avgCpu, avgRssi, traffic samples, or details containing snapshots/interfaces/signal
+      if ((overview.avgCpu && overview.avgCpu > 0) ||
         (overview.avgRssi != null) ||
         (Array.isArray(overview.trafficSpark) && overview.trafficSpark.length > 0)) return true;
-    if (Array.isArray(overview.details) && overview.details.some((det: any) =>
+      if (Array.isArray(overview.details) && overview.details.some((det: any) =>
         det?.snapshot?.timestamp || (Array.isArray(det?.latest_per_interface) && det.latest_per_interface.length) || det?.signal?.rssi_dbm != null
-    )) return true;
+      )) return true;
+      return false;
+    }
+
+    // no overview: rely on deviceList heuristics (from fallback mapping above)
+    if (upCount > 0) return true;
+    if (deviceList.some(d => !!(d && (d.status === 'up')))) return true;
+    // if we have devices but none are up, treat as offline
     return false;
   }
 
-  // no overview: rely on deviceList heuristics (from fallback mapping above)
-  if (upCount > 0) return true;
-  if (deviceList.some(d => !!(d && (d.status === 'up')))) return true;
-  // if we have devices but none are up, treat as offline
-  return false;
-}
-
-const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown' : 'offline');
+  const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown' : 'offline');
 
   // helper: short tick formatter for x-axis labels
   function tickFormatter(val: string) {
@@ -253,7 +253,7 @@ const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown'
       const v = Number(s.throughput ?? s.v ?? s.value ?? 0) || 0;
       return { ts: String(ts), v };
     });
-    arr.sort((a, b) => (Date.parse(String(a.ts)) || 0) - (Date.parse(String(b.ts)) || 0));
+    arr.sort((a: { ts: string }, b: { ts: string }) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0));
     return arr;
   }
 
@@ -336,7 +336,7 @@ const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown'
         const inK = Number(snap.inbound_kbps ?? snap.in_kbps ?? snap.inbound ?? 0);
         const outK = Number(snap.outbound_kbps ?? snap.out_kbps ?? snap.outbound ?? 0);
         if (inK || outK) kbps = inK + outK;
-        else if (typeof det.latest_throughput === 'number') kbps = Number(det.latest_throughput);
+        else if (typeof det?.latest_throughput === 'number') kbps = Number(det.latest_throughput);
       }
 
       const status = lookupStatusForDevice(ip, hostname) ?? 'unknown';
@@ -360,12 +360,17 @@ const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown'
   const timeSeries = buildTimeSeriesFromOverview();
 
   return (
-    <div className="p-4 grid gap-4">
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-md p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{overview?.towerName ?? activeTower?.name ?? 'tower overview'}</h3>
+    <div className="p-0 grid gap-6">
+      <div className="bg-card/40 border border-border/40 rounded-2xl shadow-sm backdrop-blur-md p-6 group">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-1.5 h-8 bg-primary rounded-full"></div>
+            <h3 className="text-xl font-bold tracking-tight text-foreground transition-colors group-hover:text-primary">
+              {overview?.towerName ?? activeTower?.name ?? 'Tower Overview'}
+            </h3>
+          </div>
 
-          <div className="flex space-x-2" role="tablist" aria-label="tower selector">
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="tower selector">
             {towers && towers.length ? (
               towers.map((t, i) => {
                 const stats = perTowerStats[i] ?? { total: (t.devices || []).length, up: 0, down: 0 };
@@ -374,104 +379,164 @@ const towerStatus = isTowerOnline() ? 'online' : (totalDevices === 0 ? 'unknown'
                     key={t.name}
                     onClick={() => setActive(i)}
                     aria-pressed={i === active}
-                    className={`px-3 py-1 rounded-md text-sm flex items-center gap-2 ${i === active ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+                    className={`px-4 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-wider flex items-center gap-3 transition-all duration-300 ${i === active
+                        ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 scale-105'
+                        : 'bg-muted/50 text-muted-foreground hover:bg-muted border border-transparent hover:border-border/60'
+                      }`}
                   >
-                    <span className="font-medium">{t.name}</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-white/80 dark:bg-slate-700 text-slate-600">{stats.up}/{stats.total}</span>
+                    <span>{t.name}</span>
+                    <span className={`px-2 py-0.5 rounded-lg text-[9px] ${i === active ? 'bg-white/20' : 'bg-background/50'
+                      }`}>
+                      {stats.up}/{stats.total}
+                    </span>
                   </button>
                 );
               })
             ) : (
-              <div className="text-sm text-slate-400 px-2">no towers discovered</div>
+              <div className="text-sm text-muted-foreground italic px-2">No towers discovered</div>
             )}
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-xs text-slate-500">status</div>
-            <div className="flex items-center gap-2">
-              <span
-                className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium ${
-                  towerStatus === 'online'
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                    : towerStatus === 'offline'
-                    ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                    : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
-                }`}
-              >
-                {towerStatus}
-              </span>
-              <div className="text-xs text-slate-500">devices</div>
-              <div className="text-2xl font-bold ml-2">{totalDevices ?? '—'}</div>
-            </div>
-
-            <div className="text-sm text-slate-500 mt-2">
-              down: <span className="font-medium">{upCount}</span> • up: <span className="font-medium">{downCount}</span>
-            </div>
-
-            {downNames.length > 0 && (
-              <div className="mt-2 text-xs text-slate-600">
-                up: {downNames.slice(0, 4).join(', ')}
-                {downNames.length > 4 ? ` +${downNames.length - 4} more` : ''}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <div>
+              <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Health Status</div>
+              <div className="flex items-center gap-4">
+                <span
+                  className={`inline-flex items-center px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wide shadow-sm ${towerStatus === 'online'
+                      ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                      : towerStatus === 'offline'
+                        ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                        : 'bg-muted/20 text-muted-foreground border border-border/20'
+                    }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full mr-2 ${towerStatus === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+                  {towerStatus}
+                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-foreground">{totalDevices ?? '—'}</span>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase">Nodes</span>
+                </div>
               </div>
-            )}
-          </div>
 
-          <div>
-            <div className="text-xs text-slate-500">avg cpu / avg mem</div>
-            <div className="flex items-baseline gap-3">
-              <div className="text-2xl font-bold">{overview?.avgCpu ? `${Math.round(overview.avgCpu)}%` : '—'}</div>
-              <div className="text-lg text-slate-500">/</div>
-              <div className="text-2xl font-bold">{overview?.avgMemory ? `${Math.round(overview.avgMemory)}%` : '—'}</div>
+              <div className="mt-4 flex gap-4 text-xs font-medium">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">Up:</span>
+                  <span className="text-emerald-600 font-bold">{upCount}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">Down:</span>
+                  <span className="text-rose-600 font-bold">{downCount}</span>
+                </div>
+              </div>
+
+              {downNames.length > 0 && (
+                <div className="mt-3 p-3 bg-muted/30 rounded-xl border border-border/30">
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Downstream Assets</div>
+                  <div className="text-[11px] text-muted-foreground leading-relaxed">
+                    {downNames.slice(0, 4).join(', ')}
+                    {downNames.length > 4 ? ` (+${downNames.length - 4} more)` : ''}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="text-sm text-slate-500 mt-1">avg rssi: {overview?.avgRssi ? `${Math.round(overview.avgRssi)} dBm` : '—'}</div>
+
+            <div className="p-4 bg-muted/20 rounded-2xl border border-border/20">
+              <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Averaged Telemetry</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-[10px] font-bold text-muted-foreground/60 mb-1">LOAD (CPU/MEM)</div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-xl font-bold">{overview?.avgCpu ? `${Math.round(overview.avgCpu)}%` : '—'}</span>
+                    <span className="text-muted-foreground">/</span>
+                    <span className="text-xl font-bold">{overview?.avgMemory ? `${Math.round(overview.avgMemory)}%` : '—'}</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-muted-foreground/60 mb-1">SIGNAL (RSSI)</div>
+                  <div className="text-xl font-bold">{overview?.avgRssi ? `${Math.round(overview.avgRssi)} dBm` : '—'}</div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="col-span-2">
-            <div className="text-xs text-slate-500">traffic (top devices)</div>
-            <div className="h-28 bg-slate-50 rounded p-2">
+          <div className="flex flex-col">
+            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Live Throughput Analysis</div>
+            <div className="flex-grow bg-muted/10 rounded-2xl border border-border/20 p-4 transition-all hover:bg-muted/20">
               {loading ? (
-                <div className="text-sm text-slate-400">loading...</div>
+                <div className="flex items-center justify-center h-full">
+                  <div className="flex space-x-1">
+                    <div className="w-1 h-1 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                    <div className="w-1 h-1 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="w-1 h-1 bg-primary rounded-full animate-bounce"></div>
+                  </div>
+                </div>
               ) : deviceChartData && deviceChartData.length ? (
-                <ResponsiveContainer width="100%" height={72}>
-                  <BarChart data={deviceChartData} margin={{ left: 6, right: 6 }}>
-                    <CartesianGrid vertical={false} horizontal={false} />
-                    <XAxis dataKey="name" tickFormatter={tickFormatter} interval={0} height={34} />
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={deviceChartData} margin={{ top: 10, left: 0, right: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.8} />
+                        <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.4} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" strokeOpacity={0.1} />
+                    <XAxis
+                      dataKey="name"
+                      tickFormatter={tickFormatter}
+                      interval={0}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 9, fill: 'var(--muted-foreground)', fontWeight: 600 }}
+                    />
                     <YAxis hide />
-                    <Tooltip formatter={(v: number) => `${Number(v).toFixed(2)} kbps`} />
-                    <Bar dataKey="v" barSize={14} isAnimationActive={false} />
+                    <Tooltip
+                      cursor={{ fill: 'var(--muted)', opacity: 0.1 }}
+                      contentStyle={{
+                        backgroundColor: 'var(--card)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        boxShadow: '0 10px 30px -10px rgba(0,0,0,0.5)'
+                      }}
+                    />
+                    <Bar dataKey="v" fill="url(#barGradient)" radius={[4, 4, 0, 0]} barSize={20} isAnimationActive={true} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : timeSeries && timeSeries.length ? (
-                <ResponsiveContainer width="100%" height={72}>
+                <ResponsiveContainer width="100%" height={180}>
                   <LineChart data={timeSeries}>
                     <XAxis dataKey="ts" hide />
                     <YAxis hide />
-                    <Tooltip formatter={(v: number) => `${Number(v).toFixed(2)} kbps`} />
-                    <Line type="monotone" dataKey="v" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="v" dot={false} stroke="var(--primary)" strokeWidth={3} isAnimationActive={true} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="text-sm text-slate-400">no data</div>
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40 gap-2">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                  </svg>
+                  <span className="text-[10px] font-bold uppercase tracking-widest">No Stream Data</span>
+                </div>
               )}
             </div>
-            <div className="mt-1 text-xs text-slate-500">
-              {deviceChartData && deviceChartData.length ? `showing top ${deviceChartData.length} devices by throughput` : timeSeries && timeSeries.length ? `showing recent aggregate traffic` : `no data`}
+            <div className="mt-3 text-[10px] font-bold text-muted-foreground/60 uppercase text-right tracking-tight italic">
+              {deviceChartData && deviceChartData.length ? `Peak analysis for top ${deviceChartData.length} units` : timeSeries && timeSeries.length ? `Aggregate flow telemetry` : `Dormant state`}
             </div>
           </div>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-8 pt-6 border-t border-border/40 flex justify-end gap-3">
           <button
-            className="px-3 py-1 rounded bg-sky-600 text-white text-sm disabled:opacity-60"
+            className="px-6 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-105 hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
             onClick={() => {
               if (!loading && onViewDevices && activeTower) onViewDevices(activeTower.name);
             }}
             disabled={loading || !activeTower}
-            aria-disabled={loading || !activeTower}
           >
-            {loading ? 'loading…' : 'view devices'}
+            {loading ? 'Initializing...' : 'Access Grid'}
           </button>
         </div>
       </div>

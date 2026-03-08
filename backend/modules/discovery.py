@@ -90,7 +90,8 @@ def get_device_inventory():
                status AS db_status,
                vendor AS db_vendor,
                os_version AS db_os_version,
-               last_seen AS db_last_seen
+               last_seen AS db_last_seen,
+               offline_reason AS db_offline_reason
         FROM devices
         """
     )
@@ -110,6 +111,7 @@ def get_device_inventory():
         os_version = row.get("db_os_version") or None
         status = row.get("db_status") or None
         last_seen_raw = row.get("db_last_seen")
+        offline_reason = row.get("db_offline_reason")
 
         error = None
         sessions_count = 0
@@ -236,6 +238,7 @@ def get_device_inventory():
             "uptime_seconds": uptime_seconds,
             "sessions": sessions_count,
             "last_seen": last_seen_str,
+            "offline_reason": offline_reason,
         }
 
         devices.append(device_dict)

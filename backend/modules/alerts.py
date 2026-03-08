@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from ..utils.db import run_query
 
-logger = logging.getLogger("unisys.alerts")
+logger = logging.getLogger("unioss.alerts")
 router = APIRouter()   # no prefix here — main.py provides prefix
 
 # --- GET recent alerts ---

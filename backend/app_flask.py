@@ -7,11 +7,15 @@ from backend.api.access_api import access_api
 from backend.api.discovery_api import discovery_api
 from backend.api.performance_api import performance_api
 from backend.api.traffic_api import traffic_bp
-from backend.api.performance_api import list_performance as _snapshot_performance
-from backend.api.traffic_api    import list_traffic as _snapshot_traffic
+from backend.api.performance_api import performance_api, list_performance as _snapshot_performance
+from backend.api.traffic_api import traffic_bp, list_traffic as _snapshot_traffic
+from backend.api.alerts_api import alerts_api
+from backend.api.dashboard_api import dashboard_api
+from backend.api.towers_api import towers_api
+from backend.api.health_api import health_api
+from backend.api.stream_api import stream_api
 from backend.config.settings import configure_logging
 from backend.snmp_routes import snmp_bp
-from backend.api.health_api import health_api
 import logging
 
 def create_app():
@@ -29,8 +33,12 @@ def create_app():
     app.register_blueprint(discovery_api, url_prefix='/api/discovery')
     app.register_blueprint(performance_api, url_prefix='/api/performance')
     app.register_blueprint(traffic_bp, url_prefix='/api/traffic')
+    app.register_blueprint(alerts_api, url_prefix='/api/alerts')
+    app.register_blueprint(dashboard_api, url_prefix='/api/dashboard')
+    app.register_blueprint(towers_api, url_prefix='/api/towers')
     app.register_blueprint(health_api,   url_prefix='/api/health')
     app.register_blueprint(snmp_bp, url_prefix='/api/snmp')
+    app.register_blueprint(stream_api, url_prefix='/api/stream')
 
     # ————————————— Scheduler Setup ——————————————
     sched = BackgroundScheduler()

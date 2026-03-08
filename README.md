@@ -1,8 +1,8 @@
-# UniSys Network Management Suite
+# UniOSS Network Management Suite
 
 📁 **Repository Structure**
 
-unisys/
+unioss/
 ├── backend/
 │ ├── api/ # Flask Blueprints (discovery, performance, traffic, access, SNMP)
 │ ├── modules/ # Core business logic (discovery.py, performance.py, traffic.py, access_control.py)
@@ -24,4 +24,4 @@ unisys/
 1. **Clone and enter the repo**  
    ```bash
    git clone <your‐repo‐url>
-   cd unisys
+   cd unioss

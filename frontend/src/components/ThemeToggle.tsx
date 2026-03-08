@@ -1,7 +1,7 @@
 // src/components/ThemeToggle.tsx
 import React, { useEffect, useState } from 'react';
 
-const THEME_KEY = 'unisys:theme'; // localstorage key
+const THEME_KEY = 'unioss:theme'; // localstorage key
 
 export const ThemeToggle: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {

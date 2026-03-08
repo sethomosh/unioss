@@ -9,7 +9,7 @@ import { PerformanceHistory } from './pages/PerformanceHistory';
 import { Traffic } from './pages/Traffic';
 import { AnalyticsCalendar } from './pages/AnalyticsCalendar';
 import { Login } from './pages/Login';
-import { Alerts } from './pages/Alerts';
+import AlertsPage from './pages/AlertsPage';
 import { Settings } from './pages/Settings';
 import { DevicesPage } from './pages/DevicesPage';
 import { DeviceDetailsPage } from './pages/DeviceDetailsPage';
@@ -28,6 +28,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  console.log('DEBUG_ANTIGRAVITY_v2');
   return (
     <AuthProvider>
       <Router>
@@ -42,7 +43,7 @@ function App() {
             <Route path="/devices/:deviceIp" element={<DeviceDetailsPage />} />
             <Route path="/traffic" element={<ProtectedRoute><Traffic /></ProtectedRoute>} />
 
-            <Route path="/alerts" element={<ProtectedRoute><Alerts /></ProtectedRoute>} />
+            <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute><AnalyticsCalendar /></ProtectedRoute>} />
 
 

@@ -20,13 +20,17 @@ export interface Signal {
 }
 
 export interface Device {
+  id?: string;
+  ip?: string;
   device_ip: string;
   hostname?: string;
   vendor?: string;
+  model?: string;
   os?: string;
   os_version?: string;
   status?: 'up' | 'down' | 'unknown';
   last_seen?: string;   // backend ISO string
+  lastSeen?: string;    // frontend camelCase copy
   description?: string;
   authenticated_via?: string;
   interfaces?: Interface[];
@@ -35,6 +39,7 @@ export interface Device {
   error?: string;
   cpu_pct?: number;      
   memory_pct?: number;   
+  signal?: Signal;
 }
 
 // ---------- Performance ----------

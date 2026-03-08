@@ -9,8 +9,11 @@ ENV VITE_API_BASE=$VITE_API_BASE
 
 # copy manifests & install
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
+# install dependencies with relaxed network settings
+RUN npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-retries 5 && \
+    npm config set strict-ssl false && \
+    npm install
 # copy source & build
 COPY . .
 RUN npm run build

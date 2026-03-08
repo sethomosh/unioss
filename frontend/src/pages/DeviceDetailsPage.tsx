@@ -4,11 +4,14 @@ import { useParams, Link } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import type {
   DeviceDetailsResponse,
-  PerfHistoryEntry,
-  TrafficHistoryEntry,
   IfRow,
   Session,
+  Alert
 } from '../types/types';
+import { formatUptime } from '../utils/formatters';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
+} from 'recharts';
 
 export const DeviceDetailsPage: React.FC = () => {
   const { deviceIp } = useParams<{ deviceIp: string }>();
@@ -16,6 +19,7 @@ export const DeviceDetailsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
 
   const mountedRef = useRef(true);
   const pollRef = useRef<number | null>(null);
@@ -29,13 +33,15 @@ export const DeviceDetailsPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const [resp, sess] = await Promise.all([
+        const [resp, sess, al] = await Promise.all([
           apiService.getDeviceDetails(decodeURIComponent(deviceIp)),
           apiService.getSessions(),
+          apiService.getAlerts()
         ]);
         if (!mountedRef.current) return;
         setData(resp);
         setSessions(sess || []);
+        setAlerts(al || []);
       } catch (err: unknown) {
         if (!mountedRef.current) return;
         setError(err instanceof Error ? err.message : 'Failed to load device details');
@@ -51,10 +57,13 @@ export const DeviceDetailsPage: React.FC = () => {
       if (document.hidden) return;
       apiService.getDeviceDetails(decodeURIComponent(deviceIp))
         .then(resp => { if (mountedRef.current) setData(resp); })
-        .catch(() => {});
+        .catch(() => { });
       apiService.getSessions()
         .then(sess => { if (mountedRef.current) setSessions(sess || []); })
-        .catch(() => {});
+        .catch(() => { });
+      apiService.getAlerts()
+        .then(al => { if (mountedRef.current) setAlerts(al || []); })
+        .catch(() => { });
     }, 10000);
 
     return () => {
@@ -91,7 +100,7 @@ export const DeviceDetailsPage: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-2">
             <div><strong>CPU</strong><div>{data.snapshot.cpu_pct ?? '—'}</div></div>
             <div><strong>Memory</strong><div>{data.snapshot.memory_pct ?? '—'}</div></div>
-            <div><strong>Uptime (s)</strong><div>{data.snapshot.uptime_seconds ?? '—'}</div></div>
+            <div><strong>Uptime</strong><div>{formatUptime(data.snapshot.uptime_seconds)}</div></div>
             <div>
               <strong>Timestamp</strong>
               <div>{data.snapshot.timestamp ? new Date(data.snapshot.timestamp).toLocaleString() : '—'}</div>
@@ -103,8 +112,8 @@ export const DeviceDetailsPage: React.FC = () => {
                     const sig = data.snapshot?.signal ?? data.signal ?? null;
                     if (!sig) return ' —';
                     const dbm = sig.rssi_dbm != null ? `${sig.rssi_dbm} dBm` : '—';
-                    const pct = sig.rssi_pct != null ? ` (${sig.rssi_pct}%)` : '';
-                    return `${dbm}${pct}`;
+                    const pct = sig.rssi_pct != null ? ` (${sig.rssi_pct} %)` : '';
+                    return `${dbm}${pct} `;
                   })()}
                 </div>
               </div>
@@ -171,7 +180,7 @@ export const DeviceDetailsPage: React.FC = () => {
                 <tr><td className="p-4" colSpan={5}>No interface data</td></tr>
               ) : (
                 data.latest_per_interface.map((r: IfRow) => (
-                  <tr key={`${r.device_ip}-${r.interface_name}`} className="border-t">
+                  <tr key={`${r.device_ip} -${r.interface_name} `} className="border-t">
                     <td className="px-3 py-2 font-mono">{r.interface_name}</td>
                     <td className="px-3 py-2">{r.inbound_kbps}</td>
                     <td className="px-3 py-2">{r.outbound_kbps}</td>
@@ -185,66 +194,83 @@ export const DeviceDetailsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Active Alerts */}
+      <div className="bg-white p-4 rounded shadow">
+        <h2 className="font-semibold mb-4">Device Alerts</h2>
+        {alerts.filter(a => a.device_ip === data.device_ip).length === 0 ? (
+          <div className="text-gray-500 text-sm">No active alerts for this device.</div>
+        ) : (
+          <div className="space-y-2">
+            {alerts.filter(a => a.device_ip === data.device_ip).map(alert => (
+              <div key={alert.id} className="p-3 border rounded border-red-200 bg-red-50 flex justify-between items-center">
+                <div>
+                  <span className="font-semibold text-red-800 uppercase text-xs mr-2">{alert.severity}</span>
+                  <span className="text-sm font-medium">{alert.message}</span>
+                  <div className="text-xs text-gray-500 mt-1">{new Date(alert.timestamp).toLocaleString()}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Performance history */}
       <div className="bg-white p-4 rounded shadow">
-        <h2 className="font-semibold">Performance History</h2>
-        <div className="overflow-x-auto mt-2">
-          <table className="min-w-full">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="px-3 py-2 text-left">Timestamp</th>
-                <th className="px-3 py-2 text-left">CPU %</th>
-                <th className="px-3 py-2 text-left">Memory %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.performance_history.length === 0 ? (
-                <tr><td className="p-4" colSpan={3}>No performance history</td></tr>
-              ) : (
-                data.performance_history.map((p: PerfHistoryEntry, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="px-3 py-2">{new Date(p.timestamp).toLocaleString()}</td>
-                    <td className="px-3 py-2">{p.cpu_pct}</td>
-                    <td className="px-3 py-2">{p.memory_pct}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <h2 className="font-semibold mb-4">Performance History</h2>
+        {data.performance_history.length === 0 ? (
+          <div className="text-sm text-gray-500">No performance history</div>
+        ) : (
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={[...data.performance_history].reverse()}>
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={(val) => new Date(val).toLocaleTimeString()}
+                  minTickGap={30}
+                />
+                <YAxis domain={[0, 100]} />
+                <Tooltip labelFormatter={(val) => new Date(val).toLocaleString()} />
+                <Legend />
+                <Line type="monotone" dataKey="cpu_pct" stroke="#8884d8" name="CPU %" dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="memory_pct" stroke="#82ca9d" name="Memory %" dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
 
       {/* Traffic history (most recent rows) */}
       <div className="bg-white p-4 rounded shadow">
-        <h2 className="font-semibold">Traffic History</h2>
-        <div className="overflow-x-auto mt-2">
-          <table className="min-w-full">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="px-3 py-2 text-left">Timestamp</th>
-                <th className="px-3 py-2 text-left">Interface</th>
-                <th className="px-3 py-2 text-left">Inbound (kbps)</th>
-                <th className="px-3 py-2 text-left">Outbound (kbps)</th>
-                <th className="px-3 py-2 text-left">Errors</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.traffic_history.length === 0 ? (
-                <tr><td className="p-4" colSpan={5}>No traffic history</td></tr>
-              ) : (
-                data.traffic_history.map((t: TrafficHistoryEntry, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="px-3 py-2">{new Date(t.timestamp).toLocaleString()}</td>
-                    <td className="px-3 py-2 font-mono">{t.interface_name}</td>
-                    <td className="px-3 py-2">{t.inbound_kbps}</td>
-                    <td className="px-3 py-2">{t.outbound_kbps}</td>
-                    <td className="px-3 py-2">{t.errors}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <h2 className="font-semibold mb-4">Traffic History</h2>
+        {data.traffic_history.length === 0 ? (
+          <div className="text-sm text-gray-500">No traffic history</div>
+        ) : (
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={(() => {
+                const points: Record<string, any> = {};
+                [...data.traffic_history].reverse().forEach(row => {
+                  const ts = new Date(row.timestamp).getTime();
+                  if (!points[ts]) points[ts] = { timestamp: row.timestamp, inbound_kbps: 0, outbound_kbps: 0 };
+                  points[ts].inbound_kbps += (row.inbound_kbps || 0);
+                  points[ts].outbound_kbps += (row.outbound_kbps || 0);
+                });
+                return Object.values(points).sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+              })()}>
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={(val) => new Date(val).toLocaleTimeString()}
+                  minTickGap={30}
+                />
+                <YAxis />
+                <Tooltip labelFormatter={(val) => new Date(val).toLocaleString()} />
+                <Legend />
+                <Line type="monotone" dataKey="inbound_kbps" stroke="#8884d8" name="Inbound (kbps)" dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="outbound_kbps" stroke="#82ca9d" name="Outbound (kbps)" dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
     </div>
   );
